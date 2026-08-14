@@ -78,8 +78,9 @@ async function initAds() {
 }
 let cardsShownSinceAd = 0;
 const INTERSTITIAL_EVERY_N_CARDS = 5; // required-ad placement (task 30 item 3a)
-// Toshiba (task52): open-matching (⚔️ only, no フレンド招待) duel expansion for these 4 games.
-const OPEN_DUEL_GAME_IDS = ['mathrush', 'whack', 'dodge', 'flap'];
+// Toshiba (task52): open-matching (⚔️ only, no フレンド招待) duel expansion for these games.
+// ('mathrush', 'whack' were removed along with their games — see the 2026-08-14 game-list cut.)
+const OPEN_DUEL_GAME_IDS = ['dodge', 'flap'];
 async function maybeShowInterstitial() {
   const admob = admobPlugin();
   if (!admob) return;
@@ -878,8 +879,7 @@ async function initFeed(user) {
         <div class="creator">${creatorName ? `@${escapeHtml(creatorName)} ・ リミックス` : 'Anyway公式'}</div>
       </div>
       <div class="side-actions">
-        ${def.id === 'reaction' ? `<div style="text-align:center;"><button class="duel-btn">⚔️</button></div><div style="text-align:center;"><button class="duel-invite-btn">👥</button></div>`
-          : ['flow', 'colormatch', 'aim', ...OPEN_DUEL_GAME_IDS].includes(def.id) ? `<div style="text-align:center;"><button class="duel-btn">⚔️</button></div>` : ''}
+        ${['aim', ...OPEN_DUEL_GAME_IDS].includes(def.id) ? `<div style="text-align:center;"><button class="duel-btn">⚔️</button></div>` : ''}
         <div style="text-align:center;">
           <button class="like-btn">♡</button>
           <div class="action-count like-count">0</div>
@@ -906,15 +906,7 @@ async function initFeed(user) {
     if (duelBtn) {
       duelBtn.addEventListener('click', () => {
         if (user.isGuest) return showCardHint(card, '対戦するにはログインしてください');
-        if (def.id === 'reaction') window.DuelSystem.startReactionDuel(sb, user);
-        else window.DuelSystem.startOpenDuel(sb, def.id, user);
-      });
-    }
-    const duelInviteBtn = card.querySelector('.duel-invite-btn');
-    if (duelInviteBtn) {
-      duelInviteBtn.addEventListener('click', () => {
-        if (user.isGuest) return showCardHint(card, 'フレンドを誘うにはログインしてください');
-        window.DuelSystem.openFriendPicker(sb, user, getFriendProfiles());
+        window.DuelSystem.startOpenDuel(sb, def.id, user);
       });
     }
 
@@ -1203,143 +1195,47 @@ async function initFeed(user) {
     card.querySelector('.map-photo-nav.next').addEventListener('click', () => showPhoto(photoIdx + 1));
     card.querySelectorAll('.map-photo-dot').forEach((dot, di) => dot.addEventListener('click', () => showPhoto(di)));
     card.querySelector('.map-select-btn').addEventListener('click', () => {
-      renderRuleSelector(map);
+      renderTemplateGrid(map);
     });
     return card;
   }
 
-  // Game-rule picker (2026-08-14, user request): inserted between map selection and the
-  // character/item editor. Today there's only one real rule (survival Element Arena); the
-  // other two are queued as separate builds (see status.json) but shown now so the flow and
-  // the "must pick before continuing" gate are ready ahead of them landing. Selecting one of
-  // the not-yet-built rules shows why instead of silently doing nothing.
-  const RULE_DEFS = [
-    { id: 'survival', name: 'エレメント・アリーナ(サバイバル)', desc: '襲ってくる敵を倒してスコアを稼ぐ、おなじみの遊び方。', ready: true },
-    { id: 'royale', name: 'エレメント・ロワイヤル', desc: '10人バトルロイヤル。人数が足りない時は色違いスキンのボットが埋めます。倒した相手の属性を少しの間吸収できます。', ready: false },
-    { id: 'cup', name: 'エレメント・カップ', desc: '4vs4のサッカー。精霊ごとのスキルがボールに影響します(例: 燃えるシュート、減速フィールド等)。', ready: false },
-  ];
-
-  function renderRuleSelector(map) {
-    const body = document.getElementById('create-panel-body');
-    body.innerHTML = '';
-    let selectedId = null;
-    const wrap = document.createElement('div');
-    wrap.style.cssText = 'padding:16px;';
-    wrap.innerHTML = `
-      <p class="panel-note small" style="margin-bottom:12px;">「${escapeHtml(map.name)}」で遊ぶルールを選んでください</p>
-      <div class="rule-list">
-        ${RULE_DEFS.map((r) => `
-          <button type="button" class="rule-card${r.ready ? '' : ' rule-card-soon'}" data-rule="${r.id}">
-            <div class="rule-card-name">${escapeHtml(r.name)}${r.ready ? '' : ' <span class="rule-soon-badge">準備中</span>'}</div>
-            <div class="rule-card-desc">${escapeHtml(r.desc)}</div>
-          </button>
-        `).join('')}
-      </div>
-      <button class="post-btn" id="rule-next-btn" disabled style="width:100%;margin-top:16px;opacity:0.4;">次へ</button>
-    `;
-    body.appendChild(wrap);
-    const nextBtn = wrap.querySelector('#rule-next-btn');
-    wrap.querySelectorAll('.rule-card').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const rule = RULE_DEFS.find((r) => r.id === btn.dataset.rule);
-        if (!rule.ready) { showToastNote(`${rule.name}は準備中です。もうしばらくお待ちください。`); return; }
-        selectedId = rule.id;
-        wrap.querySelectorAll('.rule-card').forEach((b) => b.classList.toggle('rule-card-selected', b === btn));
-        nextBtn.disabled = false;
-        nextBtn.style.opacity = '1';
-      });
-    });
-    nextBtn.addEventListener('click', () => {
-      if (!selectedId) return;
-      renderTemplateGrid(map);
-    });
-  }
-
-  // Small transient toast, reused instead of alert() so tapping a "coming soon" rule doesn't
-  // block the UI with a native dialog. Auto-removes itself.
-  function showToastNote(text) {
-    const el = document.createElement('div');
-    el.className = 'toast-note';
-    el.textContent = text;
-    document.body.appendChild(el);
-    setTimeout(() => el.remove(), 2600);
-  }
-
-  // The map browser's "選択" button used to just reveal a "準備中" note — it had
-  // nowhere to actually go. renderCreateForm() (the game-customize-and-post screen)
-  // already existed and worked, it just wasn't reachable from anywhere. First pass
-  // here was a plain 2-column list of all 13 games; the user then sent a reference
-  // mockup (2026-08-10) asking specifically for a visual "stand on the map, pick your
-  // spirit" scene instead, roster of character portraits along the bottom, speech
-  // bubble showing that character's skills. Rebuilt to match: this only offers the 10
-  // Element Arena characters (element_<id> in GAME_DEFS) since those are the ones
-  // with the portrait/skill data (ELEMENT_CHARACTERS, from games.js) the mockup
-  // needs — picking a plain mini-game (snake, whack-a-mole, etc.) for a themed map
-  // post doesn't fit this screen's concept, same as the mockup only shows spirits.
-  let activeMapEditor = null;
-
-  function waitForMapEditor(cb) {
-    if (window.MapEditor) { cb(); return; }
-    let tries = 0;
-    const iv = setInterval(() => {
-      tries += 1;
-      if (window.MapEditor || tries > 50) { clearInterval(iv); cb(); }
-    }, 100);
-  }
-
+  // Plain game picker for "post about this map" (2026-08-14): the previous version of this
+  // screen was a 3D "stand on the map, pick your spirit" character roster built entirely
+  // around Element Arena (map-editor.js's window.MapEditor + games.js's ELEMENT_CHARACTERS),
+  // with a rule-selector step in front of it whose only "ready" option was Element Arena
+  // survival. Element Arena was removed wholesale (still just 2D canvas sprites despite being
+  // pitched as a 3D showcase), which took the rule selector and the character roster down with
+  // it — neither had anything left to offer once there was no Element Arena game to configure.
+  // Reverted to the simpler original design: a plain list of the remaining GAME_DEFS (excluding
+  // 'mymaze', which already has its own dedicated drawing card above) that posts about the
+  // selected map via the same renderCreateForm() used everywhere else, just with mapName set.
   function renderTemplateGrid(map) {
     const body = document.getElementById('create-panel-body');
     body.innerHTML = '';
-    if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
 
-    const container = document.createElement('div');
-    container.className = 'map-editor-container';
-    body.appendChild(container);
+    const back = document.createElement('button');
+    back.className = 'back-link';
+    back.textContent = '← マップ選択に戻る';
+    back.addEventListener('click', () => renderCreatePanel());
+    body.appendChild(back);
 
-    waitForMapEditor(() => {
-      if (!window.MapEditor) {
-        container.textContent = '3Dエディタの読み込みに失敗しました。通信状況を確認してもう一度お試しください。';
-        return;
-      }
-      const bgPhoto = map.photos && map.photos[0];
-      const charIds = Object.keys(ELEMENT_CHARACTERS);
-      const characters = charIds.map((charId) => {
-        const c = ELEMENT_CHARACTERS[charId];
-        return {
-          id: charId,
-          name: c.name,
-          element: c.element,
-          color: c.primaryColor,
-          icon: c.skills[0].icon,
-          skillLine: c.skills.map((s) => `${s.icon} ${s.name}`).join(' / '),
-          ultimateName: c.ultimate.name,
-        };
-      });
+    const intro = document.createElement('p');
+    intro.className = 'panel-note';
+    intro.textContent = `「${map.name}」を舞台にするゲームを選んでください`;
+    body.appendChild(intro);
 
-      activeMapEditor = window.MapEditor.mount(container, {
-        mapName: map.name,
-        mapPhotoUrl: bgPhoto && bgPhoto.image,
-        mapColor: (bgPhoto && bgPhoto.color) || '#222',
-        characters,
-        onBack: () => { if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; } renderCreatePanel(); },
-        onConfirm: (charId, placements, rules) => {
-          const def = GAME_DEFS.find((g) => g.id === 'element_' + charId);
-          if (def) {
-            if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
-            const mapLayout = {
-              photoUrl: bgPhoto && bgPhoto.image,
-              color: (bgPhoto && bgPhoto.color) || '#222',
-              // charId is placed redundantly among items -- games.js only needs the OTHER
-              // placements (items + any non-primary characters) since the primary character
-              // is already the game itself, not something to render as a static prop too.
-              items: (placements || []).filter((p) => !(p.kind === 'character' && p.id === charId)),
-              rules: rules || { timeLimit: 0, difficulty: 1 },
-            };
-            renderCreateForm(def, map.name, mapLayout);
-          }
-        },
-      });
+    const grid = document.createElement('div');
+    grid.className = 'template-game-grid';
+    GAME_DEFS.filter((def) => def.id !== 'mymaze').forEach((def) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'template-game-card';
+      btn.innerHTML = `<div class="template-game-title">${escapeHtml(def.title)}</div><div class="template-game-genre">${escapeHtml(def.genre)}</div>`;
+      btn.addEventListener('click', () => renderCreateForm(def, map.name, null));
+      grid.appendChild(btn);
     });
+    body.appendChild(grid);
   }
 
   function renderCreateForm(def, mapName = null, mapLayout = null) {

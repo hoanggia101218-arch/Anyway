@@ -192,61 +192,6 @@ function makeBestTracker(id, onHint) {
   };
 }
 
-// ---------- 1. Reaction (反射神経) ----------
-function mountReaction(container, { onScore, onHint }, config = {}) {
-  const maxWait = config.maxWait ?? 1500;
-  const canvas = makeCanvas(container);
-  const ctx = canvas.getContext('2d');
-  let score = 0, state = 'waiting', deadline = performance.now() + 500 + Math.random() * maxWait, readyDeadline = 0, msg = '';
-  let burst = [];
-  const combo = makeCombo();
-  const reportBest = makeBestTracker('reaction', onHint);
-  onHint('赤いうちは待って、緑になったらタップ！');
-
-  // Difficulty curve: as score climbs, the target shrinks and the reaction window (time
-  // allowed once it turns green before it counts as a miss) tightens — early taps stay forgiving.
-  function radiusFor(s) { return Math.min(canvas.width, canvas.height) * 0.22 * Math.max(0.55, 1 - s * 0.03); }
-  function reactionWindowFor(s) { return Math.max(500, 1100 - s * 35); }
-
-  function onPointer() {
-    if (state === 'ready') {
-      score++; onScore(score);
-      combo.hit(onHint);
-      reportBest(score);
-      msg = '';
-      spawnBurst(burst, canvas.width / 2, canvas.height / 2, '#31d158', 14);
-      state = 'waiting';
-      deadline = performance.now() + 500 + Math.random() * maxWait;
-    } else if (state === 'waiting') {
-      msg = '早い！';
-      combo.miss();
-      deadline = performance.now() + 500 + Math.random() * maxWait;
-    }
-  }
-  canvas.addEventListener('pointerdown', onPointer);
-
-  const stop = loopRAF((dt, t) => {
-    if (state === 'waiting' && t > deadline) { state = 'ready'; readyDeadline = t + reactionWindowFor(score); }
-    if (state === 'ready' && t > readyDeadline) {
-      msg = '遅い！';
-      combo.miss();
-      state = 'waiting';
-      deadline = performance.now() + 500 + Math.random() * maxWait;
-    }
-    ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.beginPath();
-    ctx.fillStyle = state === 'ready' ? '#31d158' : '#ff4b4b';
-    const r = radiusFor(score);
-    ctx.arc(canvas.width / 2, canvas.height / 2, r, 0, Math.PI * 2);
-    ctx.fill();
-    drawBurst(ctx, burst, dt);
-    ctx.fillStyle = '#fff'; ctx.font = '18px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(msg, canvas.width / 2, canvas.height / 2 + r + 36);
-  });
-
-  return () => { stop(); canvas.removeEventListener('pointerdown', onPointer); canvas.remove(); };
-}
-
 // ---------- 2. Dodge (アクション) ----------
 function mountDodge(container, { onScore, onHint }, config = {}) {
   const blockSpeed = config.blockSpeed ?? 180;
@@ -400,124 +345,6 @@ function mountMemory(container, { onScore, onHint }, config = {}) {
   return () => { wrap.remove(); };
 }
 
-// ---------- 4. Whack (アクション) ----------
-function mountWhack(container, { onScore, onHint }, config = {}) {
-  const popDuration = config.popDuration ?? 700;
-  onHint('光ったモグラを素早くタップ！');
-  const wrap = document.createElement('div');
-  wrap.className = 'grid-dom';
-  wrap.style.gridTemplateColumns = 'repeat(3, 1fr)';
-  wrap.style.width = 'min(85vw, 320px)';
-  wrap.style.height = 'min(85vw, 320px)';
-  container.appendChild(wrap);
-
-  let score = 0, holes = [], activeIdx = -1, timer = null, hideTimer = null;
-  const combo = makeCombo();
-  const reportBest = makeBestTracker('whack', onHint);
-  for (let i = 0; i < 9; i++) {
-    const el = document.createElement('div');
-    el.className = 'dom-cell';
-    el.style.background = '#3a2a1a';
-    el.style.aspectRatio = '1';
-    el.style.fontSize = '30px';
-    el.addEventListener('pointerdown', () => {
-      if (i === activeIdx) {
-        score++; onScore(score);
-        combo.hit(onHint);
-        reportBest(score);
-        popScale(el, 1.3);
-        el.textContent = '';
-        activeIdx = -1;
-        clearTimeout(hideTimer);
-      } else {
-        shakeEl(el);
-        combo.miss();
-      }
-    });
-    holes.push(el);
-    wrap.appendChild(el);
-  }
-  function pop() {
-    if (activeIdx !== -1) holes[activeIdx].textContent = '';
-    activeIdx = Math.floor(Math.random() * 9);
-    holes[activeIdx].textContent = '🐹';
-    const dur = Math.max(320, popDuration - score * 10);
-    hideTimer = setTimeout(() => {
-      if (activeIdx !== -1) holes[activeIdx].textContent = '';
-      activeIdx = -1;
-    }, dur);
-  }
-  function schedule() {
-    clearInterval(timer);
-    timer = setInterval(pop, Math.max(420, 850 - score * 12));
-  }
-  schedule();
-  pop();
-  const rampTimer = setInterval(schedule, 2000);
-
-  return () => { clearInterval(timer); clearInterval(rampTimer); clearTimeout(hideTimer); wrap.remove(); };
-}
-
-// ---------- 5. Simon (記憶) ----------
-function mountSimon(container, { onScore, onHint }, config = {}) {
-  onHint('光った順番どおりにボタンを押そう');
-  const wrap = document.createElement('div');
-  wrap.className = 'grid-dom';
-  wrap.style.gridTemplateColumns = 'repeat(2, 1fr)';
-  wrap.style.width = 'min(70vw, 260px)';
-  wrap.style.height = 'min(70vw, 260px)';
-  container.appendChild(wrap);
-
-  const colors = (config.colors && config.colors.length === 4)
-    ? config.colors
-    : ['#ff4b4b', '#4ea8ff', '#ffd23f', '#31d158'];
-  let seq = [], input = [], score = 0, playing = true, btns = [];
-  const notes = [261.6, 329.6, 392.0, 523.3];
-  const reportBest = makeBestTracker('simon', onHint);
-  colors.forEach((c, i) => {
-    const el = document.createElement('div');
-    el.className = 'dom-cell';
-    el.style.background = c;
-    el.style.opacity = '0.55';
-    el.addEventListener('pointerdown', () => onPress(i));
-    btns.push(el);
-    wrap.appendChild(el);
-  });
-
-  function flash(i, dur = 380, play = true) {
-    if (play) sfx.note(notes[i]);
-    return new Promise(res => {
-      btns[i].style.opacity = '1';
-      setTimeout(() => { btns[i].style.opacity = '0.55'; res(); }, dur);
-    });
-  }
-  async function playSeq() {
-    playing = false;
-    await new Promise(r => setTimeout(r, 400));
-    for (const i of seq) { await flash(i); await new Promise(r => setTimeout(r, 150)); }
-    playing = true; input = [];
-  }
-  function nextRound() { seq.push(Math.floor(Math.random() * 4)); playSeq(); }
-  function onPress(i) {
-    if (!playing) return;
-    flash(i, 200);
-    popScale(btns[i], 1.12, 160);
-    input.push(i);
-    const idx = input.length - 1;
-    if (input[idx] !== seq[idx]) { sfx.bad(); shakeEl(wrap); seq = []; input = []; nextRound(); return; }
-    if (input.length === seq.length) {
-      score = Math.max(score, seq.length - 1); onScore(score);
-      reportBest(score);
-      sfx.win();
-      btns.forEach((b, bi) => setTimeout(() => popScale(b, 1.08, 160), bi * 40));
-      setTimeout(nextRound, 500);
-    }
-  }
-  nextRound();
-
-  return () => { wrap.remove(); };
-}
-
 // ---------- 6. Flap (アクション) ----------
 function mountFlap(container, { onScore, onHint }, config = {}) {
   const gravity = config.gravity ?? 900;
@@ -583,220 +410,6 @@ function mountFlap(container, { onScore, onHint }, config = {}) {
   });
 
   return () => { stop(); canvas.removeEventListener('pointerdown', flap); canvas.remove(); };
-}
-
-// ---------- 7. Math Rush (クイズ) ----------
-function mountMathRush(container, { onScore, onHint }, config = {}) {
-  const timeLimit = config.timeLimit ?? 5000;
-  onHint('正しい答えをすばやくタップ！');
-  const wrap = document.createElement('div');
-  wrap.style.textAlign = 'center';
-  wrap.style.width = '80vw';
-  wrap.style.maxWidth = '340px';
-  const q = document.createElement('div');
-  q.style.fontSize = '40px'; q.style.fontWeight = '800'; q.style.marginBottom = '24px';
-  const barWrap = document.createElement('div');
-  barWrap.style.height = '6px'; barWrap.style.background = '#333'; barWrap.style.borderRadius = '3px'; barWrap.style.marginBottom = '24px';
-  const bar = document.createElement('div');
-  bar.style.height = '100%'; bar.style.background = '#fe2c55'; bar.style.borderRadius = '3px'; bar.style.width = '100%';
-  barWrap.appendChild(bar);
-  const ansWrap = document.createElement('div');
-  ansWrap.style.display = 'grid'; ansWrap.style.gridTemplateColumns = 'repeat(3, 1fr)'; ansWrap.style.gap = '10px';
-  wrap.appendChild(q); wrap.appendChild(barWrap); wrap.appendChild(ansWrap);
-  container.appendChild(wrap);
-
-  let score = 0, answer = 0, timeLeft = 0, total = 5000, timer, answered = false;
-  const combo = makeCombo();
-  const reportBest = makeBestTracker('mathrush', onHint);
-
-  function newQuestion() {
-    answered = false;
-    const a = Math.floor(Math.random() * 20) + 1, b = Math.floor(Math.random() * 20) + 1;
-    const op = Math.random() < 0.5 ? '+' : '-';
-    answer = op === '+' ? a + b : a - b;
-    q.textContent = `${a} ${op} ${b} = ?`;
-    const opts = new Set([answer]);
-    while (opts.size < 3) opts.add(answer + Math.floor(Math.random() * 9) - 4);
-    const arr = [...opts].sort(() => Math.random() - 0.5);
-    ansWrap.innerHTML = '';
-    arr.forEach(v => {
-      const b2 = document.createElement('button');
-      b2.textContent = v; b2.className = 'dom-cell';
-      b2.style.background = '#2a2a2a'; b2.style.color = '#fff'; b2.style.border = 'none';
-      b2.style.padding = '14px 0'; b2.style.fontSize = '18px'; b2.style.borderRadius = '10px';
-      b2.addEventListener('pointerdown', () => {
-        if (answered) return;
-        answered = true;
-        if (v === answer) {
-          score++; onScore(score);
-          combo.hit(onHint);
-          reportBest(score);
-          b2.style.background = '#31d158';
-          popScale(b2, 1.18);
-        } else {
-          combo.miss();
-          b2.style.background = '#ff4b4b';
-          shakeEl(b2);
-        }
-        setTimeout(newQuestion, 140);
-      });
-      ansWrap.appendChild(b2);
-    });
-    total = Math.max(1800, timeLimit - score * 120); timeLeft = total;
-  }
-  newQuestion();
-  timer = setInterval(() => {
-    if (answered) return;
-    timeLeft -= 100;
-    bar.style.width = Math.max(0, (timeLeft / total) * 100) + '%';
-    if (timeLeft <= 0) { combo.miss(); newQuestion(); }
-  }, 100);
-
-  return () => { clearInterval(timer); wrap.remove(); };
-}
-
-// ---------- 8. Color Match (反射神経) ----------
-function mountColorMatch(container, { onScore, onHint }) {
-  onHint('表示された「文字の色」と同じ色を、時間内にタップ！');
-  const wrap = document.createElement('div');
-  wrap.style.textAlign = 'center'; wrap.style.width = '80vw'; wrap.style.maxWidth = '340px';
-  const word = document.createElement('div');
-  word.style.fontSize = '42px'; word.style.fontWeight = '800'; word.style.marginBottom = '20px';
-  const barWrap = document.createElement('div');
-  barWrap.style.height = '6px'; barWrap.style.background = '#333'; barWrap.style.borderRadius = '3px'; barWrap.style.marginBottom = '20px';
-  const bar = document.createElement('div');
-  bar.style.height = '100%'; bar.style.background = '#fe2c55'; bar.style.borderRadius = '3px'; bar.style.width = '100%';
-  barWrap.appendChild(bar);
-  const opts = document.createElement('div');
-  opts.style.display = 'grid'; opts.style.gridTemplateColumns = 'repeat(2, 1fr)'; opts.style.gap = '12px';
-  wrap.appendChild(word); wrap.appendChild(barWrap); wrap.appendChild(opts);
-  container.appendChild(wrap);
-
-  const names = [['あか', '#ff4b4b'], ['あお', '#4ea8ff'], ['みどり', '#31d158'], ['きいろ', '#ffd23f']];
-  let score = 0, correctColor = '', timeLeft = 0, total = 2600, timer, answered = false;
-  const combo = makeCombo();
-  const reportBest = makeBestTracker('colormatch', onHint);
-
-  function round() {
-    answered = false;
-    const textPick = names[Math.floor(Math.random() * 4)];
-    const colorPick = names[Math.floor(Math.random() * 4)];
-    word.textContent = textPick[0];
-    word.style.color = colorPick[1];
-    correctColor = colorPick[1];
-    opts.innerHTML = '';
-    const shuffled = [...names].sort(() => Math.random() - 0.5);
-    shuffled.forEach(([n, c]) => {
-      const b = document.createElement('button');
-      b.className = 'dom-cell'; b.style.background = c; b.style.border = '3px solid transparent'; b.style.padding = '20px 0'; b.style.borderRadius = '10px';
-      b.addEventListener('pointerdown', () => {
-        if (answered) return;
-        answered = true;
-        if (c === correctColor) {
-          score++; onScore(score);
-          combo.hit(onHint);
-          reportBest(score);
-          b.style.borderColor = '#fff';
-          popScale(b, 1.15);
-        } else {
-          combo.miss();
-          shakeEl(b);
-          flashEl(word);
-        }
-        setTimeout(round, 140);
-      });
-      opts.appendChild(b);
-    });
-    total = Math.max(1200, 2600 - score * 60); timeLeft = total;
-  }
-  round();
-  timer = setInterval(() => {
-    if (answered) return;
-    timeLeft -= 100;
-    bar.style.width = Math.max(0, (timeLeft / total) * 100) + '%';
-    if (timeLeft <= 0) { combo.miss(); round(); }
-  }, 100);
-
-  return () => { clearInterval(timer); wrap.remove(); };
-}
-
-// ---------- 9. Snake (クラシック) ----------
-function mountSnake(container, { onScore, onHint }, config = {}) {
-  const startInterval = config.startInterval ?? 140;
-  onHint('下のボタンで操作(WASD/矢印キーもOK)。上下スワイプは次のゲームへ移動します');
-  const canvas = makeCanvas(container);
-  const ctx = canvas.getContext('2d');
-  const cell = 18;
-  const cols = Math.floor(canvas.width / cell), rows = Math.floor(canvas.height / cell);
-  let snake, dir, food, score, acc, interval, dead, particles;
-  const reportBest = makeBestTracker('snake', onHint);
-  function reset() {
-    snake = [{ x: Math.floor(cols / 2), y: Math.floor(rows / 2) }];
-    dir = { x: 1, y: 0 }; score = 0; acc = 0; interval = startInterval; dead = false; particles = [];
-    placeFood();
-  }
-  function placeFood() {
-    food = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
-  }
-  reset();
-  const dirMap = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
-  function applyDir(d) {
-    if (d && !(d.x === -dir.x && d.y === -dir.y)) dir = d;
-    if (dead) reset();
-  }
-  function keydown(e) {
-    const key = {
-      ArrowUp: 'up', w: 'up', W: 'up',
-      ArrowDown: 'down', s: 'down', S: 'down',
-      ArrowLeft: 'left', a: 'left', A: 'left',
-      ArrowRight: 'right', d: 'right', D: 'right',
-    }[e.key];
-    if (key) applyDir(dirMap[key]);
-  }
-  window.addEventListener('keydown', keydown);
-  const dpad = makeDpad(container, (key) => applyDir(dirMap[key]));
-  function tapCanvas() { if (dead) reset(); }
-  canvas.addEventListener('pointerdown', tapCanvas);
-
-  const stop = loopRAF((dt) => {
-    if (!dead) {
-      acc += dt * 1000;
-      if (acc > interval) {
-        acc = 0;
-        const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
-        if (head.x < 0 || head.y < 0 || head.x >= cols || head.y >= rows || snake.some(s => s.x === head.x && s.y === head.y)) {
-          dead = true;
-          sfx.gameover(); flashEl(canvas);
-          spawnBurst(particles, head.x * cell + cell / 2, head.y * cell + cell / 2, '#ff4b4b', 16);
-          reportBest(score);
-        } else {
-          snake.unshift(head);
-          if (head.x === food.x && head.y === food.y) {
-            score++; onScore(score); interval = Math.max(70, interval - 2); placeFood();
-            sfx.score(Math.min(score, 8));
-            spawnBurst(particles, head.x * cell + cell / 2, head.y * cell + cell / 2, '#ffd23f', 8);
-          } else snake.pop();
-        }
-      }
-    }
-    ctx.fillStyle = '#0e1a10'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#ff4b4b'; ctx.fillRect(food.x * cell, food.y * cell, cell - 2, cell - 2);
-    ctx.fillStyle = dead ? '#777' : '#31d158';
-    for (const s of snake) ctx.fillRect(s.x * cell, s.y * cell, cell - 2, cell - 2);
-    drawBurst(ctx, particles, dt);
-    if (dead) {
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('タップ/ボタンでリスタート', canvas.width / 2, canvas.height / 2);
-    }
-  });
-
-  return () => {
-    stop();
-    window.removeEventListener('keydown', keydown);
-    canvas.removeEventListener('pointerdown', tapCanvas);
-    dpad.remove();
-    canvas.remove();
-  };
 }
 
 // ---------- 10. Slide 2048-lite (パズル) ----------
@@ -1069,971 +682,6 @@ function mountAim(container, { onScore, onHint }, config = {}) {
   });
 
   return () => { stop(); canvas.removeEventListener('pointerdown', tap); canvas.remove(); };
-}
-
-// ---------- 13. Color Flow (反射神経) ----------
-function mountFlow(container, { onScore, onHint }, config = {}) {
-  const startSpeed = config.startSpeed ?? 160;
-  onHint('上の丸と同じ色のボールだけをタップ！ミスするとライフが減るよ');
-  const canvas = makeCanvas(container);
-  const ctx = canvas.getContext('2d');
-  const reportBest = makeBestTracker('flow', onHint);
-  const combo = makeCombo();
-  const maxLives = 3;
-  const palette = (config.colors && config.colors.length === 4)
-    ? config.colors
-    : ['#ff4b4b', '#4ea8ff', '#31d158', '#ffd23f'];
-  let target, balls, score, spawnT, lives, dead, particles = [];
-
-  function pickTarget() { target = palette[Math.floor(Math.random() * palette.length)]; }
-  function reset() { score = 0; balls = []; spawnT = 0; lives = maxLives; dead = false; particles = []; pickTarget(); }
-  reset();
-
-  function loseLife(x, y) {
-    combo.miss();
-    lives--;
-    spawnBurst(particles, x, y, '#ff4b4b', 8);
-    if (lives <= 0) { dead = true; sfx.gameover(); flashEl(canvas); reportBest(score); }
-  }
-
-  function spawn() {
-    const color = palette[Math.floor(Math.random() * palette.length)];
-    balls.push({ x: Math.random() * (canvas.width - 60) + 30, y: -20, r: 22, color });
-  }
-  function tapAt(x, y) {
-    let hitIdx = -1;
-    balls.forEach((b, i) => { if (hitIdx === -1 && Math.hypot(b.x - x, b.y - y) < b.r + 10) hitIdx = i; });
-    if (hitIdx === -1) return;
-    const b = balls[hitIdx];
-    balls.splice(hitIdx, 1);
-    if (b.color === target) {
-      score++; onScore(score);
-      combo.hit(onHint);
-      reportBest(score);
-      spawnBurst(particles, b.x, b.y, b.color, 10);
-      pickTarget();
-    } else {
-      flashEl(canvas);
-      loseLife(b.x, b.y);
-    }
-  }
-  function pointerdown(e) {
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left;
-    const y = (e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top;
-    if (dead) { reset(); return; }
-    tapAt(x, y);
-  }
-  canvas.addEventListener('pointerdown', pointerdown);
-
-  const stop = loopRAF((dt) => {
-    if (!dead) {
-      spawnT += dt;
-      const spawnEvery = Math.max(0.45, 1.1 - score * 0.02);
-      if (spawnT > spawnEvery) { spawnT = 0; spawn(); }
-      balls.forEach(b => b.y += (startSpeed + score * 4) * dt);
-      balls = balls.filter(b => {
-        if (b.y > canvas.height + 30) {
-          if (b.color === target && !dead) loseLife(b.x, canvas.height - 10);
-          return false;
-        }
-        return true;
-      });
-    }
-    ctx.fillStyle = '#101020'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('ターゲット', canvas.width / 2, 22);
-    ctx.beginPath(); ctx.fillStyle = target; ctx.arc(canvas.width / 2, 40, 12, 0, Math.PI * 2); ctx.fill();
-    for (let i = 0; i < maxLives; i++) {
-      ctx.fillStyle = i < lives ? '#ff4b4b' : 'rgba(255,255,255,0.2)';
-      ctx.beginPath(); ctx.arc(canvas.width / 2 - 36 + i * 20, 40, 6, 0, Math.PI * 2); ctx.fill();
-    }
-    balls.forEach(b => { ctx.beginPath(); ctx.fillStyle = b.color; ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill(); });
-    drawBurst(ctx, particles, dt);
-    if (dead) {
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('タップでリスタート', canvas.width / 2, canvas.height / 2);
-    }
-  });
-
-  return () => { stop(); canvas.removeEventListener('pointerdown', pointerdown); canvas.remove(); };
-}
-
-// ---------- 14. Element Arena: full Season 1 "Element Awakening" roster (アクション) ----------
-// One data-driven engine shared by all 10 characters — a new character is a data entry
-// (stats/skills/passive/silhouette), not a new game. Character art is drawn procedurally in
-// canvas (no external image assets yet) to match the reference sheets — swappable for real
-// exported sprites later without touching the engine below (only drawTopper() would change).
-//
-// Each kit maps onto a small set of reusable skill types (dash / aoe / heal / buff / drain)
-// so a character's 通常攻撃+スキル1-3+必殺技+パッシブ from the design sheet becomes config,
-// not bespoke code.
-const ELEMENT_CHARACTERS = {
-  blaze: {
-    name: 'ブレイズ', element: '炎', topper: 'flame', primaryColor: '#ff5a2b', secondaryColor: '#ffb020',
-    baseHp: 100, baseAtk: 14, baseSpd: 160, normalAttackName: '3連続炎スラッシュ',
-    skills: [
-      { name: 'ファイアダッシュ', type: 'dash', cooldown: 4, mult: 1.5, color: '#ff8a3d', icon: '🔥' },
-      { name: 'フレイムサークル', type: 'aoe', cooldown: 6, mult: 1.3, radius: 70, color: '#ff5a2b', icon: '🔥' },
-      { name: 'バーニングチャージ', type: 'buff', cooldown: 9, duration: 4, color: '#ffd23f', icon: '⚡' },
-    ],
-    ultimate: { name: 'フェニックスバースト', mult: 3 },
-    passive: { type: 'hp_scaling_atk', mid: 1.3, big: 1.6 },
-  },
-  aqua: {
-    name: 'アクア', element: '水', topper: 'droplet', primaryColor: '#4ea8ff', secondaryColor: '#bfe6ff',
-    baseHp: 110, baseAtk: 11, baseSpd: 150, normalAttackName: 'ウォーターボール',
-    skills: [
-      { name: 'ヒーリングレイン', type: 'heal', cooldown: 7, healRatio: 0.25, color: '#bfe6ff', icon: '💧' },
-      { name: 'バブルシールド', type: 'buff', cooldown: 9, duration: 4, color: '#4ea8ff', icon: '🫧' },
-      { name: 'オーシャンウェーブ', type: 'aoe', cooldown: 6, mult: 1.2, radius: 75, color: '#2f7dc9', icon: '🌊' },
-    ],
-    ultimate: { name: 'ピュアアクアバースト', mult: 2.6 },
-    passive: { type: 'regen', rate: 3 },
-  },
-  volt: {
-    name: 'ボルト', element: '雷', topper: 'lightning', primaryColor: '#ffd23f', secondaryColor: '#fff2a8',
-    baseHp: 85, baseAtk: 13, baseSpd: 210, normalAttackName: 'ライトニングスラッシュ',
-    skills: [
-      { name: 'サンダーダッシュ', type: 'dash', cooldown: 3.5, mult: 1.4, color: '#ffd23f', icon: '⚡' },
-      { name: 'エレキボール', type: 'aoe', cooldown: 5, mult: 1.1, radius: 60, color: '#ffe98a', icon: '⚡' },
-      { name: 'ライトニングストーム', type: 'aoe', cooldown: 7, mult: 1.6, radius: 90, color: '#ffd23f', icon: '⛈️' },
-    ],
-    ultimate: { name: 'サンダーオーバードライブ', mult: 2.8 },
-    passive: { type: 'speed_boost', mult: 1.2 },
-  },
-  gust: {
-    name: 'ガスト', element: '風', topper: 'leaf', primaryColor: '#6bd97a', secondaryColor: '#bdf5c4',
-    baseHp: 90, baseAtk: 12, baseSpd: 190, normalAttackName: 'ウィンドスラッシュ',
-    skills: [
-      { name: 'エアダッシュ', type: 'dash', cooldown: 3.5, mult: 1.3, color: '#6bd97a', icon: '💨' },
-      { name: 'エアループ', type: 'aoe', cooldown: 6, mult: 1.2, radius: 70, color: '#9ff0ad', icon: '🌀' },
-      { name: 'トルネードステップ', type: 'aoe', cooldown: 7, mult: 1.4, radius: 80, color: '#6bd97a', icon: '🌪️' },
-    ],
-    ultimate: { name: 'グランドストーム', mult: 2.7 },
-    passive: { type: 'dodge_chance', chance: 0.25 },
-  },
-  terra: {
-    name: 'テラ', element: '岩', topper: 'rocky', primaryColor: '#8a7355', secondaryColor: '#b7c98a',
-    baseHp: 140, baseAtk: 15, baseSpd: 120, normalAttackName: 'ストーンパンチ',
-    skills: [
-      { name: 'アースシールド', type: 'buff', cooldown: 8, duration: 4, color: '#b7c98a', icon: '🛡️' },
-      { name: '大地の壁', type: 'aoe', cooldown: 6, mult: 1.2, radius: 65, color: '#8a7355', icon: '🧱' },
-      { name: 'マウンテンクラッシュ', type: 'aoe', cooldown: 7, mult: 1.5, radius: 85, color: '#6b5a3f', icon: '⛰️' },
-    ],
-    ultimate: { name: 'ジオインパクト', mult: 3.2 },
-    passive: { type: 'hp_scaling_def', mid: 0.75, big: 0.5 },
-  },
-  frost: {
-    name: 'フロスト', element: '氷', topper: 'crystal', primaryColor: '#7fd6f2', secondaryColor: '#d8f4ff',
-    baseHp: 105, baseAtk: 12, baseSpd: 140, normalAttackName: 'アイスニードル',
-    skills: [
-      { name: 'フリーズブレス', type: 'aoe', cooldown: 5, mult: 1.1, radius: 65, color: '#a8ecff', icon: '❄️' },
-      { name: 'アイスフィールド', type: 'aoe', cooldown: 6, mult: 1.2, radius: 75, color: '#7fd6f2', icon: '❄️' },
-      { name: 'ブリザード', type: 'aoe', cooldown: 7, mult: 1.5, radius: 85, color: '#d8f4ff', icon: '🌨️' },
-    ],
-    ultimate: { name: 'グレイシャルバースト', mult: 2.9 },
-    passive: { type: 'hp_scaling_def', mid: 0.8, big: 0.55 },
-  },
-  light: {
-    name: 'ライト', element: '光', topper: 'halo', primaryColor: '#ffe9a8', secondaryColor: '#ffffff',
-    baseHp: 100, baseAtk: 12, baseSpd: 160, normalAttackName: 'ライトボルト',
-    skills: [
-      { name: 'ヒールライト', type: 'heal', cooldown: 7, healRatio: 0.22, color: '#fff6d8', icon: '✨' },
-      { name: 'プロテクション', type: 'buff', cooldown: 8, duration: 4, color: '#ffe9a8', icon: '🛡️' },
-      { name: 'セイクリッドレイ', type: 'buff', cooldown: 9, duration: 4, color: '#ffffff', icon: '✨' },
-    ],
-    ultimate: { name: 'ホーリーライトバースト', mult: 2.7 },
-    passive: { type: 'cooldown_reduction', mult: 1.2 },
-  },
-  nox: {
-    name: 'ノクス', element: '闇', topper: 'shadow', primaryColor: '#6b4fc9', secondaryColor: '#2a1a4a',
-    baseHp: 90, baseAtk: 16, baseSpd: 175, normalAttackName: 'シャドウスラッシュ',
-    skills: [
-      { name: 'ダークステップ', type: 'dash', cooldown: 3.5, mult: 1.5, color: '#6b4fc9', icon: '🌑' },
-      { name: '暗闇', type: 'aoe', cooldown: 6, mult: 1.2, radius: 70, color: '#3a2a6a', icon: '🌑' },
-      { name: 'カースドレイン', type: 'drain', cooldown: 7, mult: 1.4, radius: 70, color: '#8a6fe0', icon: '🩸' },
-    ],
-    ultimate: { name: 'ダークネスフィナーレ', mult: 3.1 },
-    passive: { type: 'crit_chance', chance: 0.25 },
-  },
-  leaf: {
-    name: 'リーフ', element: '植物', topper: 'flower', primaryColor: '#7fcf6b', secondaryColor: '#ffb6d5',
-    baseHp: 115, baseAtk: 11, baseSpd: 150, normalAttackName: 'リーフショット',
-    skills: [
-      { name: 'つるの拘束', type: 'aoe', cooldown: 6, mult: 1.0, radius: 70, color: '#7fcf6b', icon: '🌿' },
-      { name: 'グリーンヒール', type: 'heal', cooldown: 7, healRatio: 0.25, color: '#bdf5c4', icon: '💚' },
-      { name: 'フォレストラプソディ', type: 'buff', cooldown: 9, duration: 4, color: '#ffb6d5', icon: '🌸' },
-    ],
-    ultimate: { name: 'エバーグリーンガーデン', mult: 2.6 },
-    passive: { type: 'regen', rate: 3.5 },
-  },
-  plasma: {
-    name: 'プラズマ', element: 'エネルギー', topper: 'rings', primaryColor: '#b06bff', secondaryColor: '#6fe0ff',
-    baseHp: 95, baseAtk: 14, baseSpd: 165, normalAttackName: 'プラズマボルト',
-    skills: [
-      { name: 'オーバーチャージ', type: 'buff', cooldown: 8, duration: 4, color: '#b06bff', icon: '⚡' },
-      { name: 'エナジーシフト', type: 'heal', cooldown: 7, healRatio: 0.2, color: '#6fe0ff', icon: '🔋' },
-      { name: 'プラズマフィールド', type: 'aoe', cooldown: 6, mult: 1.3, radius: 75, color: '#b06bff', icon: '🌀' },
-    ],
-    ultimate: { name: 'プラズマインパクト', mult: 3.0 },
-    passive: { type: 'cooldown_reduction', mult: 1.25 },
-  },
-};
-
-function drawTopper(ctx, type, t, color) {
-  ctx.fillStyle = color;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
-  switch (type) {
-    case 'flame':
-      for (let i = -2; i <= 2; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * 7, -18);
-        ctx.quadraticCurveTo(i * 7 + 4, -34 - Math.sin(t * 5 + i) * 4, i * 7, -44 - Math.sin(t * 4 + i) * 3);
-        ctx.quadraticCurveTo(i * 7 - 4, -34, i * 7, -18);
-        ctx.fill();
-      }
-      break;
-    case 'droplet':
-      ctx.beginPath();
-      ctx.moveTo(0, -46 - Math.sin(t * 3) * 3);
-      ctx.quadraticCurveTo(12, -30, 8, -18);
-      ctx.quadraticCurveTo(0, -10, -8, -18);
-      ctx.quadraticCurveTo(-12, -30, 0, -46 - Math.sin(t * 3) * 3);
-      ctx.fill();
-      break;
-    case 'lightning':
-      for (let i = -2; i <= 2; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * 8, -18);
-        ctx.lineTo(i * 8 + 5, -32 - Math.abs(i) * 3);
-        ctx.lineTo(i * 8 - 2, -30);
-        ctx.lineTo(i * 8 + 3, -42 - Math.abs(i) * 2);
-        ctx.lineTo(i * 8 - 6, -26);
-        ctx.closePath();
-        ctx.fill();
-      }
-      break;
-    case 'leaf':
-      ctx.beginPath(); ctx.ellipse(0, -30, 8, 16, Math.sin(t * 2) * 0.2, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(-14, -16, 5, 10, -0.6, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(14, -16, 5, 10, 0.6, 0, Math.PI * 2); ctx.fill();
-      break;
-    case 'rocky':
-      [[-10, -20, 7], [4, -28, 9], [16, -18, 6]].forEach(([bx, by, r]) => {
-        ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
-      });
-      break;
-    case 'crystal':
-      for (let i = -1; i <= 1; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * 12, -18);
-        ctx.lineTo(i * 12 + 5, -20 - Math.abs(i) * 6);
-        ctx.lineTo(i * 12, -40 - Math.sin(t * 4 + i) * 3);
-        ctx.lineTo(i * 12 - 5, -20 - Math.abs(i) * 6);
-        ctx.closePath();
-        ctx.fill();
-      }
-      break;
-    case 'halo':
-      ctx.beginPath(); ctx.ellipse(0, -34, 12, 4, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.ellipse(-18, -6, 7, 12, 0.5, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(18, -6, 7, 12, -0.5, 0, Math.PI * 2); ctx.fill();
-      break;
-    case 'shadow':
-      for (let i = -2; i <= 2; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * 7, -16);
-        ctx.lineTo(i * 7 + 4, -30 - Math.abs(i) * 4);
-        ctx.lineTo(i * 7 - 4, -30 - Math.abs(i) * 4);
-        ctx.closePath();
-        ctx.fill();
-      }
-      break;
-    case 'flower':
-      for (let i = 0; i < 5; i++) {
-        const a = (i / 5) * Math.PI * 2;
-        ctx.beginPath(); ctx.ellipse(Math.cos(a) * 7, -34 + Math.sin(a) * 7, 5, 4, a, 0, Math.PI * 2); ctx.fill();
-      }
-      ctx.fillStyle = '#ffe066';
-      ctx.beginPath(); ctx.arc(0, -34, 3, 0, Math.PI * 2); ctx.fill();
-      break;
-    case 'rings':
-      [0, 1, 2].forEach((i) => {
-        ctx.beginPath();
-        ctx.ellipse(Math.cos(t * 2 + i * 2) * 16, -20, 6, 14, t + i, 0, Math.PI * 2);
-        ctx.stroke();
-      });
-      break;
-  }
-  ctx.lineWidth = 1;
-}
-
-function drawElementSprite(ctx, x, y, facing, t, hit, c) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(facing, 1);
-  const bob = Math.sin(t * 6) * 3;
-  ctx.translate(0, bob);
-  drawTopper(ctx, c.topper, t, hit ? '#fff' : c.secondaryColor);
-  ctx.beginPath(); ctx.fillStyle = hit ? '#fff' : c.primaryColor;
-  ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#2a1206';
-  ctx.beginPath(); ctx.arc(-7, -2, 3, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(7, -2, 3, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = '#2a1206'; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(0, 4, 6, 0, Math.PI); ctx.stroke();
-  ctx.globalAlpha = 0.75; ctx.fillStyle = hit ? '#fff' : c.primaryColor;
-  ctx.beginPath(); ctx.ellipse(-9, 20, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(9, 20, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.restore();
-}
-
-// 自分で作った3Dマップ(map-editor.js)を実際のプレイ空間として遊べるモード。
-// ブロスタのクリエイティブモードのように、配置したアイテムがそのままゲーム内の
-// 仕掛けになる。既存のmountElementCharacter(2Dキャンバス版)は一切変更していない --
-// config.mapLayoutがある投稿だけがこちらに分岐する。
-const SPEED_TO_WORLD_UNITS = 0.016;
-
-function mountElementArena3D(charId, c, container, { onScore, onHint }, config) {
-  const layout = config.mapLayout;
-  const atk = config.atk ?? c.baseAtk;
-  onHint(`WASD/スティックで移動、タップで${c.normalAttackName}！自分で作ったマップで戦おう`);
-
-  const ME = window.MapEditor;
-  const GROUND_HALF_X = ME.GROUND_HALF_X, GROUND_HALF_Z = ME.GROUND_HALF_Z;
-  const rules = layout.rules || { timeLimit: 0, difficulty: 1 };
-  const maxHp = c.baseHp, spd = c.baseSpd;
-  const reportBest = makeBestTracker('element_' + charId, onHint);
-  const combo = makeCombo();
-
-  const root = document.createElement('div');
-  root.style.cssText = 'position:relative;width:100%;height:100%;overflow:hidden;background:#14151a;';
-  container.appendChild(root);
-
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.domElement.style.cssText = 'display:block;width:100%;height:100%;touch-action:none;';
-  root.appendChild(renderer.domElement);
-  renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
-
-  const bgColor = layout.color || '#223';
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(bgColor);
-  scene.fog = new THREE.Fog(new THREE.Color(bgColor).getHex(), 9, 22);
-
-  const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 100);
-
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x30302a, 1.05));
-  const key = new THREE.DirectionalLight(0xffffff, 1.6);
-  key.position.set(4, 7, 4);
-  scene.add(key);
-
-  // Same terrain-building code as the editor (real heightmap relief + carved water, not a
-  // flat painted disc) -- window.MapEditor.buildGround so both stay visually identical.
-  const ground = ME.buildGround(scene, { photoUrl: layout.photoUrl, mapColor: layout.color });
-
-  function resize() {
-    const w = root.clientWidth || 1, h = root.clientHeight || 1;
-    renderer.setSize(w, h);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-  }
-  const resizeObserver = new ResizeObserver(resize);
-  resizeObserver.observe(root);
-  resize();
-
-  // ---------------- player + scene population ----------------
-  const player = ME.buildCharacterInstance(charId, scene);
-  player.group.scale.setScalar(ME.CHAR_SCALE);
-  let px = 0, pz = 0, facing = 1;
-
-  const decorations = []; // static/idle-only placed characters (not the player)
-  const arenaItems = []; // { type, x, z, inst, hiddenUntil }
-  (layout.items || []).forEach((p) => {
-    if (p.kind === 'character') {
-      const inst = ME.buildCharacterInstance(p.id, scene);
-      if (inst) {
-        inst.group.position.set(p.x, ground.heightAt(p.x, p.z), p.z);
-        inst.group.scale.setScalar(ME.CHAR_SCALE);
-        decorations.push(inst);
-      }
-    } else if (p.kind === 'item') {
-      const inst = ME.buildItemInstance(p.id);
-      if (inst) {
-        inst.group.position.set(p.x, ground.heightAt(p.x, p.z), p.z);
-        inst.group.scale.setScalar(ME.ITEM_SCALE);
-        scene.add(inst.group);
-        arenaItems.push({ type: p.id, x: p.x, z: p.z, inst, hiddenUntil: 0 });
-      }
-    }
-  });
-  // Everything above is placed synchronously, before the map photo (and therefore the real
-  // heightmap) has finished loading -- ground.heightAt() only had the flat-ground fallback
-  // to give it at that point. Re-snap every static object's Y once the real heightmap lands;
-  // the player (px/pz-driven, re-set every frame in animate()) doesn't need this.
-  ground.onHeightReady(() => {
-    for (const d of decorations) d.group.position.y = ground.heightAt(d.group.position.x, d.group.position.z);
-    for (const it of arenaItems) it.inst.group.position.y = ground.heightAt(it.x, it.z);
-  });
-  const obstacles = arenaItems.filter((it) => it.type === 'rock' || it.type === 'house');
-  const teleporters = arenaItems.filter((it) => it.type === 'teleporter');
-
-  // ---------------- state ----------------
-  let hp, score, dead, buffUntil, ultGauge, atkCooldown, skillCooldowns, stealthed;
-  let enemies, spawnT, spawnEvery, lastTeleportAt, timeUp, elapsed;
-  function reset() {
-    px = 0; pz = 0; facing = 1;
-    hp = maxHp; score = 0; dead = false; timeUp = false; elapsed = 0; buffUntil = 0; ultGauge = 0; atkCooldown = 0;
-    skillCooldowns = c.skills.map((s, i) => s.cooldown * (0.3 + i * 0.25));
-    // remove any enemies left over from the previous life BEFORE clearing the array --
-    // clearing first would drop the only references to their meshes, leaking them in the scene.
-    if (enemies) { for (const e of enemies) scene.remove(e.mesh); }
-    enemies = []; spawnT = 0; spawnEvery = 1.6; stealthed = false; lastTeleportAt = 0;
-    player.group.position.set(0, ground.heightAt(0, 0), 0);
-  }
-  reset();
-
-  function isBuffed() { return performance.now() < buffUntil; }
-  function atkMultiplier() {
-    let m = 1;
-    if (c.passive.type === 'hp_scaling_atk') { const r = hp / maxHp; if (r <= 0.2) m *= c.passive.big; else if (r <= 0.5) m *= c.passive.mid; }
-    if (isBuffed()) m *= 1.3;
-    return m;
-  }
-  function damageTakenMultiplier() {
-    let m = 1;
-    if (c.passive.type === 'hp_scaling_def') { const r = hp / maxHp; if (r <= 0.2) m *= c.passive.big; else if (r <= 0.5) m *= c.passive.mid; }
-    if (c.passive.type === 'dodge_chance') m *= (1 - c.passive.chance);
-    if (isBuffed()) m *= 0.6;
-    return m;
-  }
-  function speedMultiplier() {
-    let m = 1;
-    if (c.passive.type === 'speed_boost') m *= c.passive.mult;
-    if (isBuffed()) m *= 1.25;
-    return m;
-  }
-  function cooldownRate() { return c.passive.type === 'cooldown_reduction' ? c.passive.mult : 1; }
-
-  function spawnBurst3D(x, y, z, color, n) {
-    for (let i = 0; i < n; i++) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), new THREE.MeshBasicMaterial({ color }));
-      m.position.set(x, y, z);
-      const ang = Math.random() * Math.PI * 2, spd2 = 0.6 + Math.random() * 1.2;
-      m.userData = { vx: Math.cos(ang) * spd2, vy: 1.2 + Math.random() * 0.8, vz: Math.sin(ang) * spd2, life: 0.45 };
-      scene.add(m);
-      burstMeshes.push(m);
-    }
-  }
-  const burstMeshes = [];
-
-  function spawnEnemy() {
-    // Pick a random point on the rectangular ground's perimeter (not a circle -- the
-    // ground itself is rectangular now, matching each map photo's actual aspect ratio).
-    const mx = GROUND_HALF_X - 0.3, mz = GROUND_HALF_Z - 0.3;
-    const edge = Math.floor(Math.random() * 4);
-    let ex, ez;
-    if (edge === 0) { ex = (Math.random() * 2 - 1) * mx; ez = -mz; }
-    else if (edge === 1) { ex = (Math.random() * 2 - 1) * mx; ez = mz; }
-    else if (edge === 2) { ex = -mx; ez = (Math.random() * 2 - 1) * mz; }
-    else { ex = mx; ez = (Math.random() * 2 - 1) * mz; }
-    const mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(0.22, 0), new THREE.MeshStandardMaterial({ color: 0x7a3aff, flatShading: true }));
-    mesh.position.set(ex, 0.22, ez);
-    scene.add(mesh);
-    enemies.push({ x: ex, z: ez, mesh, hp: (20 + score * 2) * rules.difficulty, r: 0.22, spd: (1.1 + score * 0.05) * rules.difficulty });
-  }
-
-  function dealDamage(e, dmg) {
-    e.hp -= dmg;
-    ultGauge = Math.min(100, ultGauge + dmg * 0.6);
-    spawnBurst3D(e.x, 0.3, e.z, 0xffffff, 4);
-    if (e.hp <= 0) {
-      score++; onScore(score); combo.hit(onHint); reportBest(score);
-      scene.remove(e.mesh);
-      const idx = enemies.indexOf(e);
-      if (idx !== -1) enemies.splice(idx, 1);
-    }
-  }
-
-  function basicAttack() {
-    if (dead || timeUp) { reset(); return; }
-    if (atkCooldown > 0) return;
-    atkCooldown = 0.35;
-    const isCrit = c.passive.type === 'crit_chance' && Math.random() < c.passive.chance;
-    sfx.note(isCrit ? 700 : 500);
-    const dmg = atk * atkMultiplier() * (isCrit ? 1.8 : 1);
-    enemies.slice().forEach((e) => { if (Math.hypot(e.x - px, e.z - pz) < 0.75) dealDamage(e, dmg); });
-  }
-  renderer.domElement.addEventListener('pointerdown', basicAttack);
-
-  function applySkillEffect(skill) {
-    const dmg = atk * atkMultiplier() * (skill.mult || 1);
-    switch (skill.type) {
-      case 'dash': {
-        if (!enemies.length) return;
-        const nearest = enemies.reduce((a, b) => (Math.hypot(a.x - px, a.z - pz) < Math.hypot(b.x - px, b.z - pz) ? a : b));
-        const dx = nearest.x - px, dz = nearest.z - pz, d = Math.hypot(dx, dz) || 1;
-        px += (dx / d) * 0.9; pz += (dz / d) * 0.9;
-        clampToGround();
-        spawnBurst3D(px, 0.3, pz, skill.color === undefined ? 0xffffff : colorToHex(skill.color), 6);
-        enemies.slice().forEach((e) => { if (Math.hypot(e.x - px, e.z - pz) < 0.7) dealDamage(e, dmg); });
-        break;
-      }
-      case 'aoe': {
-        spawnBurst3D(px, 0.3, pz, colorToHex(skill.color), 10);
-        const radius = (skill.radius || 60) / 80;
-        enemies.slice().forEach((e) => { if (Math.hypot(e.x - px, e.z - pz) < radius) dealDamage(e, dmg); });
-        break;
-      }
-      case 'heal': {
-        hp = Math.min(maxHp, hp + maxHp * skill.healRatio);
-        spawnBurst3D(px, 0.3, pz, colorToHex(skill.color), 8);
-        break;
-      }
-      case 'buff': {
-        buffUntil = performance.now() + skill.duration * 1000;
-        spawnBurst3D(px, 0.3, pz, colorToHex(skill.color), 8);
-        break;
-      }
-      case 'drain': {
-        let healed = 0;
-        const radius = (skill.radius || 60) / 80;
-        enemies.slice().forEach((e) => {
-          if (Math.hypot(e.x - px, e.z - pz) < radius) { healed += Math.min(e.hp, dmg) * 0.5; dealDamage(e, dmg); }
-        });
-        hp = Math.min(maxHp, hp + healed);
-        spawnBurst3D(px, 0.3, pz, colorToHex(skill.color), 6);
-        break;
-      }
-    }
-    sfx.note(600);
-    onHint(`${skill.icon || '✨'} ${skill.name}！`);
-  }
-  function colorToHex(cssColor) {
-    if (typeof cssColor !== 'string') return 0xffffff;
-    if (cssColor[0] === '#') return parseInt(cssColor.slice(1), 16);
-    return 0xffffff;
-  }
-
-  function clampToGround() {
-    const mx = GROUND_HALF_X - 0.3, mz = GROUND_HALF_Z - 0.3;
-    px = Math.max(-mx, Math.min(mx, px));
-    pz = Math.max(-mz, Math.min(mz, pz));
-  }
-
-  // ---------------- movement: WASD/arrows on PC, drag-joystick on mobile ----------------
-  const keyDirBits = { w: 0, a: 0, s: 0, d: 0 };
-  const keyToBit = { w: 'w', ArrowUp: 'w', a: 'a', ArrowLeft: 'a', s: 's', ArrowDown: 's', d: 'd', ArrowRight: 'd' };
-  let joyVec = { x: 0, y: 0 }, keyVec = { x: 0, y: 0 }, moveVec = { x: 0, y: 0 };
-  function recomputeKeyVec() {
-    const x = (keyDirBits.d ? 1 : 0) - (keyDirBits.a ? 1 : 0);
-    const y = (keyDirBits.s ? 1 : 0) - (keyDirBits.w ? 1 : 0);
-    const len = Math.hypot(x, y) || 1;
-    keyVec = { x: x / len, y: y / len };
-  }
-  function applyMoveVec() { moveVec = (Math.hypot(joyVec.x, joyVec.y) > 0.08) ? joyVec : keyVec; }
-  function keydownMove(e) { const bit = keyToBit[e.key]; if (!bit) return; keyDirBits[bit] = 1; recomputeKeyVec(); applyMoveVec(); }
-  function keyupMove(e) { const bit = keyToBit[e.key]; if (!bit) return; keyDirBits[bit] = 0; recomputeKeyVec(); applyMoveVec(); }
-  window.addEventListener('keydown', keydownMove);
-  window.addEventListener('keyup', keyupMove);
-  const joystick = makeJoystick(root, (v) => { joyVec = v; applyMoveVec(); });
-
-  // ---------------- render loop ----------------
-  const clock = new THREE.Clock();
-  let rafId = null;
-  function animate() {
-    rafId = requestAnimationFrame(animate);
-    const dt = Math.min(0.05, clock.getDelta());
-    const t = clock.elapsedTime;
-
-    if (!dead && !timeUp) {
-      elapsed += dt;
-      if (rules.timeLimit > 0 && elapsed >= rules.timeLimit) {
-        timeUp = true;
-        sfx.win();
-        onHint('⏱️ タイムアップ！');
-        reportBest(score);
-      }
-      if (moveVec.x) facing = moveVec.x > 0 ? 1 : -1;
-      // c.baseSpd is tuned for the 2D canvas version's pixel-scale coordinate space (canvas
-      // is a few hundred px across); this 3D ground is only ~9 world units wide, so speed
-      // needs converting into that much smaller scale -- SPEED_TO_WORLD_UNITS is that
-      // pixels->world-units factor, chosen so crossing the whole arena takes a few seconds.
-      const nx = px + moveVec.x * spd * speedMultiplier() * dt * SPEED_TO_WORLD_UNITS;
-      const nz = pz + moveVec.y * spd * speedMultiplier() * dt * SPEED_TO_WORLD_UNITS;
-      let blocked = false;
-      for (const ob of obstacles) { if (Math.hypot(nx - ob.x, nz - ob.z) < 0.55) { blocked = true; break; } }
-      if (!blocked) { px = nx; pz = nz; clampToGround(); }
-      player.group.position.set(px, ground.heightAt(px, pz), pz);
-      player.group.rotation.y = facing > 0 ? Math.PI / 2 : -Math.PI / 2;
-      atkCooldown = Math.max(0, atkCooldown - dt);
-
-      stealthed = false;
-      for (const it of arenaItems) {
-        const dist = Math.hypot(px - it.x, pz - it.z);
-        if (it.type === 'heal' && dist < 0.7 && hp < maxHp) hp = Math.min(maxHp, hp + maxHp * 0.12 * dt);
-        else if (it.type === 'grass' && dist < 0.75) stealthed = true;
-        else if (it.type === 'energy' && dist < 0.6 && performance.now() > it.hiddenUntil) {
-          buffUntil = performance.now() + 8000;
-          it.hiddenUntil = performance.now() + 8000;
-          it.inst.group.visible = false;
-          onHint('🔮 エネルギーボール取得！攻撃力アップ');
-          sfx.score(4);
-        } else if (it.type === 'teleporter' && dist < 0.6 && performance.now() > lastTeleportAt) {
-          const others = teleporters.filter((tp) => tp !== it);
-          if (others.length) {
-            const dest = others[Math.floor(Math.random() * others.length)];
-            px = dest.x; pz = dest.z;
-            lastTeleportAt = performance.now() + 1200;
-            spawnBurst3D(px, 0.4, pz, 0x66f2ff, 10);
-            sfx.note(800);
-          }
-        }
-        if (it.type === 'energy' && it.inst.group.visible === false && performance.now() > it.hiddenUntil) {
-          it.inst.group.visible = true;
-        }
-      }
-
-      c.skills.forEach((skill, i) => {
-        skillCooldowns[i] -= dt * cooldownRate();
-        if (skillCooldowns[i] <= 0 && enemies.length) { skillCooldowns[i] = skill.cooldown; applySkillEffect(skill); }
-      });
-
-      if (ultGauge >= 100) {
-        ultGauge = 0;
-        sfx.win();
-        onHint(`💥 ${c.ultimate.name}！！`);
-        spawnBurst3D(px, 0.4, pz, colorToHex(c.primaryColor), 20);
-        const dmg = atk * atkMultiplier() * c.ultimate.mult;
-        enemies.slice().forEach((e) => dealDamage(e, dmg));
-      }
-
-      spawnT += dt;
-      spawnEvery = Math.max(0.6, (1.6 - score * 0.03) / rules.difficulty);
-      if (spawnT > spawnEvery) { spawnT = 0; spawnEnemy(); }
-
-      const detectRadius = stealthed ? 1.1 : 999;
-      enemies.forEach((e) => {
-        const dx = px - e.x, dz = pz - e.z, d = Math.hypot(dx, dz) || 1;
-        if (d < detectRadius) { e.x += (dx / d) * e.spd * dt; e.z += (dz / d) * e.spd * dt; }
-        e.mesh.position.set(e.x, 0.22 + Math.sin(t * 4 + e.x) * 0.03, e.z);
-        e.mesh.rotation.y = t * 1.5;
-        if (d < 0.32) hp -= 10 * dt * damageTakenMultiplier();
-      });
-      if (c.passive.type === 'regen') hp = Math.min(maxHp, hp + c.passive.rate * dt);
-      if (hp <= 0) { hp = 0; dead = true; sfx.gameover(); flashEl(renderer.domElement); reportBest(score); }
-    }
-
-    for (let i = burstMeshes.length - 1; i >= 0; i--) {
-      const m = burstMeshes[i];
-      m.userData.vy -= dt * 2.2;
-      m.position.x += m.userData.vx * dt; m.position.y += m.userData.vy * dt; m.position.z += m.userData.vz * dt;
-      m.userData.life -= dt;
-      if (m.userData.life <= 0) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); burstMeshes.splice(i, 1); }
-      else { m.material.opacity = m.userData.life / 0.45; m.material.transparent = true; }
-    }
-
-    ground.update(t);
-    player.update(t, dt);
-    for (const d of decorations) d.update(t, dt);
-    for (const it of arenaItems) it.inst.update(t, dt);
-
-    camera.position.set(px, 6.6, pz + 6.2);
-    camera.lookAt(px, 0.5, pz);
-
-    hud.hp.style.width = Math.max(0, (hp / maxHp) * 100) + '%';
-    hud.ult.style.width = Math.max(0, (ultGauge / 100) * 100) + '%';
-    hud.restart.style.display = (dead || timeUp) ? 'block' : 'none';
-    hud.restart.textContent = timeUp ? `⏱️ タイムアップ！スコア${score} / タップでもう一度` : 'タップでリスタート';
-    if (rules.timeLimit > 0) {
-      hud.timer.style.display = 'block';
-      hud.timer.textContent = `⏱️ ${Math.max(0, Math.ceil(rules.timeLimit - elapsed))}`;
-    }
-
-    renderer.render(scene, camera);
-  }
-
-  // ---------------- HUD overlay ----------------
-  const hudRoot = document.createElement('div');
-  hudRoot.style.cssText = 'position:absolute;top:10px;left:10px;right:10px;z-index:4;pointer-events:none;';
-  hudRoot.innerHTML = `
-    <div style="background:rgba(255,255,255,0.15);border-radius:6px;height:9px;overflow:hidden;">
-      <div class="__hp" style="background:${c.primaryColor};height:100%;width:100%;"></div>
-    </div>
-    <div style="background:rgba(255,255,255,0.15);border-radius:4px;height:5px;overflow:hidden;margin-top:5px;">
-      <div class="__ult" style="background:#ffd23f;height:100%;width:0%;"></div>
-    </div>
-    <div class="__timer" style="display:none;margin-top:6px;text-align:center;color:#fff;font-weight:700;font-size:14px;text-shadow:0 1px 4px rgba(0,0,0,0.6);"></div>
-    <div class="__restart" style="display:none;margin-top:10px;text-align:center;color:#fff;font-weight:700;font-size:16px;text-shadow:0 1px 4px rgba(0,0,0,0.6);">タップでリスタート</div>
-  `;
-  root.appendChild(hudRoot);
-  const hud = {
-    hp: hudRoot.querySelector('.__hp'),
-    ult: hudRoot.querySelector('.__ult'),
-    restart: hudRoot.querySelector('.__restart'),
-    timer: hudRoot.querySelector('.__timer'),
-  };
-
-  animate();
-
-  return () => {
-    if (rafId) cancelAnimationFrame(rafId);
-    resizeObserver.disconnect();
-    window.removeEventListener('keydown', keydownMove);
-    window.removeEventListener('keyup', keyupMove);
-    renderer.domElement.removeEventListener('pointerdown', basicAttack);
-    joystick.remove();
-    player.dispose();
-    for (const d of decorations) d.dispose();
-    for (const it of arenaItems) it.inst.dispose();
-    for (const e of enemies) scene.remove(e.mesh);
-    for (const m of burstMeshes) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
-    ME.disposeGround(ground);
-    renderer.dispose();
-    container.innerHTML = '';
-  };
-}
-
-function mountElementCharacter(charId) {
-  return function (container, { onScore, onHint }, config = {}) {
-    const c = ELEMENT_CHARACTERS[charId];
-    // Posts made through the 3D map editor carry the map/items the creator placed --
-    // play those back as the actual arena (Brawl Stars Creative Mode style) instead of the
-    // generic flat top-down canvas. Everything below this branch is untouched/unaffected.
-    if (config.mapLayout && window.MapEditor) {
-      return mountElementArena3D(charId, c, container, { onScore, onHint }, config);
-    }
-    const atk = config.atk ?? c.baseAtk;
-    onHint(`WASD/スティックで移動、タップで${c.normalAttackName}！スキルと必殺技は自動発動`);
-    const canvas = makeCanvas(container);
-    const ctx = canvas.getContext('2d');
-    const reportBest = makeBestTracker('element_' + charId, onHint);
-    const combo = makeCombo();
-
-    const maxHp = c.baseHp, spd = c.baseSpd;
-    let px, py, hp, score, dead, facing, animT, buffUntil;
-    let enemies, particles;
-    let atkCooldown, skillCooldowns, ultGauge, moveDir;
-    let spawnT, spawnEvery;
-
-    function reset() {
-      px = canvas.width / 2; py = canvas.height / 2;
-      hp = maxHp; score = 0; dead = false; facing = 1; animT = 0; buffUntil = 0;
-      enemies = []; particles = [];
-      atkCooldown = 0; ultGauge = 0; moveDir = { x: 0, y: 0 };
-      skillCooldowns = c.skills.map((s, i) => s.cooldown * (0.3 + i * 0.25));
-      spawnT = 0; spawnEvery = 1.6;
-    }
-    reset();
-
-    function isBuffed() { return performance.now() < buffUntil; }
-    function atkMultiplier() {
-      let m = 1;
-      if (c.passive.type === 'hp_scaling_atk') { const r = hp / maxHp; if (r <= 0.2) m *= c.passive.big; else if (r <= 0.5) m *= c.passive.mid; }
-      if (isBuffed()) m *= 1.3;
-      return m;
-    }
-    function damageTakenMultiplier() {
-      let m = 1;
-      if (c.passive.type === 'hp_scaling_def') { const r = hp / maxHp; if (r <= 0.2) m *= c.passive.big; else if (r <= 0.5) m *= c.passive.mid; }
-      if (c.passive.type === 'dodge_chance') m *= (1 - c.passive.chance);
-      if (isBuffed()) m *= 0.6;
-      return m;
-    }
-    function speedMultiplier() {
-      let m = 1;
-      if (c.passive.type === 'speed_boost') m *= c.passive.mult;
-      if (isBuffed()) m *= 1.25;
-      return m;
-    }
-    function cooldownRate() { return c.passive.type === 'cooldown_reduction' ? c.passive.mult : 1; }
-
-    function spawnEnemy() {
-      const edge = Math.floor(Math.random() * 4);
-      let ex, ey;
-      if (edge === 0) { ex = Math.random() * canvas.width; ey = -20; }
-      else if (edge === 1) { ex = canvas.width + 20; ey = Math.random() * canvas.height; }
-      else if (edge === 2) { ex = Math.random() * canvas.width; ey = canvas.height + 20; }
-      else { ex = -20; ey = Math.random() * canvas.height; }
-      enemies.push({ x: ex, y: ey, hp: 20 + score * 2, r: 16, spd: 50 + score * 2 });
-    }
-    function spawnParticle(x, y, color) {
-      for (let i = 0; i < 6; i++) particles.push({ x, y, vx: (Math.random() - 0.5) * 140, vy: (Math.random() - 0.5) * 140, life: 0.4, color });
-    }
-    function dealDamage(e, dmg) {
-      e.hp -= dmg;
-      ultGauge = Math.min(100, ultGauge + dmg * 0.6);
-      spawnParticle(e.x, e.y, '#fff');
-      if (e.hp <= 0) {
-        score++; onScore(score); combo.hit(onHint); reportBest(score);
-        const idx = enemies.indexOf(e);
-        if (idx !== -1) enemies.splice(idx, 1);
-      }
-    }
-
-    function basicAttack() {
-      if (dead) { reset(); return; }
-      if (atkCooldown > 0) return;
-      atkCooldown = 0.35;
-      const isCrit = c.passive.type === 'crit_chance' && Math.random() < c.passive.chance;
-      sfx.note(isCrit ? 700 : 500);
-      const dmg = atk * atkMultiplier() * (isCrit ? 1.8 : 1);
-      enemies.slice().forEach((e) => { if (Math.hypot(e.x - px, e.y - py) < 60) dealDamage(e, dmg); });
-    }
-    canvas.addEventListener('pointerdown', basicAttack);
-
-    // Continuous held-movement: WASD/arrow keys on PC, drag-joystick on mobile. Both feed
-    // into moveDir every frame rather than makeDpad's old discrete tap-then-auto-release,
-    // since this game (unlike snake/2048) needs real analog-feeling movement.
-    const keyDirBits = { w: 0, a: 0, s: 0, d: 0 };
-    const keyToBit = {
-      w: 'w', ArrowUp: 'w', a: 'a', ArrowLeft: 'a', s: 's', ArrowDown: 's', d: 'd', ArrowRight: 'd',
-    };
-    let joyVec = { x: 0, y: 0 };
-    function recomputeKeyVec() {
-      const x = (keyDirBits.d ? 1 : 0) - (keyDirBits.a ? 1 : 0);
-      const y = (keyDirBits.s ? 1 : 0) - (keyDirBits.w ? 1 : 0);
-      const len = Math.hypot(x, y) || 1;
-      keyVec = { x: x / len, y: y / len };
-    }
-    let keyVec = { x: 0, y: 0 };
-    function applyMoveVec() {
-      const v = (Math.hypot(joyVec.x, joyVec.y) > 0.08) ? joyVec : keyVec;
-      moveDir = v;
-      if (v.x) facing = v.x > 0 ? 1 : -1;
-    }
-    function keydownMove(e) {
-      const bit = keyToBit[e.key];
-      if (!bit) return;
-      keyDirBits[bit] = 1;
-      recomputeKeyVec();
-      applyMoveVec();
-    }
-    function keyupMove(e) {
-      const bit = keyToBit[e.key];
-      if (!bit) return;
-      keyDirBits[bit] = 0;
-      recomputeKeyVec();
-      applyMoveVec();
-    }
-    window.addEventListener('keydown', keydownMove);
-    window.addEventListener('keyup', keyupMove);
-    const joystick = makeJoystick(container, (v) => { joyVec = v; applyMoveVec(); });
-
-    function applySkillEffect(skill) {
-      const dmg = atk * atkMultiplier() * (skill.mult || 1);
-      switch (skill.type) {
-        case 'dash': {
-          if (!enemies.length) return;
-          const nearest = enemies.reduce((a, b) => (Math.hypot(a.x - px, a.y - py) < Math.hypot(b.x - px, b.y - py) ? a : b));
-          const dx = nearest.x - px, dy = nearest.y - py, d = Math.hypot(dx, dy) || 1;
-          px += (dx / d) * 90; py += (dy / d) * 90;
-          px = Math.max(30, Math.min(canvas.width - 30, px));
-          py = Math.max(30, Math.min(canvas.height - 30, py));
-          spawnParticle(px, py, skill.color);
-          enemies.slice().forEach((e) => { if (Math.hypot(e.x - px, e.y - py) < 50) dealDamage(e, dmg); });
-          break;
-        }
-        case 'aoe': {
-          for (let i = 0; i < 10; i++) spawnParticle(px, py, skill.color);
-          enemies.slice().forEach((e) => { if (Math.hypot(e.x - px, e.y - py) < skill.radius) dealDamage(e, dmg); });
-          break;
-        }
-        case 'heal': {
-          hp = Math.min(maxHp, hp + maxHp * skill.healRatio);
-          for (let i = 0; i < 8; i++) spawnParticle(px, py, skill.color);
-          break;
-        }
-        case 'buff': {
-          buffUntil = performance.now() + skill.duration * 1000;
-          for (let i = 0; i < 8; i++) spawnParticle(px, py, skill.color);
-          break;
-        }
-        case 'drain': {
-          let healed = 0;
-          enemies.slice().forEach((e) => {
-            if (Math.hypot(e.x - px, e.y - py) < skill.radius) { healed += Math.min(e.hp, dmg) * 0.5; dealDamage(e, dmg); }
-          });
-          hp = Math.min(maxHp, hp + healed);
-          spawnParticle(px, py, skill.color);
-          break;
-        }
-      }
-      sfx.note(600);
-      onHint(`${skill.icon || '✨'} ${skill.name}！`);
-    }
-
-    const stop = loopRAF((dt) => {
-      animT += dt;
-      if (!dead) {
-        px += moveDir.x * spd * speedMultiplier() * dt; py += moveDir.y * spd * speedMultiplier() * dt;
-        px = Math.max(30, Math.min(canvas.width - 30, px));
-        py = Math.max(30, Math.min(canvas.height - 30, py));
-        atkCooldown = Math.max(0, atkCooldown - dt);
-
-        c.skills.forEach((skill, i) => {
-          skillCooldowns[i] -= dt * cooldownRate();
-          if (skillCooldowns[i] <= 0 && enemies.length) {
-            skillCooldowns[i] = skill.cooldown;
-            applySkillEffect(skill);
-          }
-        });
-
-        if (ultGauge >= 100) {
-          ultGauge = 0;
-          sfx.win();
-          onHint(`💥 ${c.ultimate.name}！！`);
-          for (let i = 0; i < 20; i++) spawnParticle(px, py, c.primaryColor);
-          const dmg = atk * atkMultiplier() * c.ultimate.mult;
-          enemies.slice().forEach((e) => dealDamage(e, dmg));
-        }
-
-        spawnT += dt;
-        spawnEvery = Math.max(0.6, 1.6 - score * 0.03);
-        if (spawnT > spawnEvery) { spawnT = 0; spawnEnemy(); }
-        enemies.forEach((e) => {
-          const dx = px - e.x, dy = py - e.y, d = Math.hypot(dx, dy) || 1;
-          e.x += (dx / d) * e.spd * dt; e.y += (dy / d) * e.spd * dt;
-          if (d < 26) hp -= 12 * dt * damageTakenMultiplier();
-        });
-        if (c.passive.type === 'regen') hp = Math.min(maxHp, hp + c.passive.rate * dt);
-        if (hp <= 0) { hp = 0; dead = true; sfx.gameover(); flashEl(canvas); reportBest(score); }
-      }
-      particles.forEach((p) => { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; });
-      particles = particles.filter((p) => p.life > 0);
-
-      ctx.fillStyle = '#1a0e0a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(16, 16, canvas.width - 32, 10);
-      ctx.fillStyle = c.primaryColor; ctx.fillRect(16, 16, (canvas.width - 32) * (hp / maxHp), 10);
-      ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(16, 30, canvas.width - 32, 6);
-      ctx.fillStyle = '#ffd23f'; ctx.fillRect(16, 30, (canvas.width - 32) * (ultGauge / 100), 6);
-
-      enemies.forEach((e) => { ctx.beginPath(); ctx.fillStyle = '#7a3aff'; ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2); ctx.fill(); });
-      particles.forEach((p) => {
-        ctx.globalAlpha = Math.max(0, p.life / 0.4);
-        ctx.beginPath(); ctx.fillStyle = p.color; ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.globalAlpha = 1;
-      });
-      drawElementSprite(ctx, px, py, facing, animT, atkCooldown > 0.2, c);
-
-      if (dead) {
-        ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('タップでリスタート', canvas.width / 2, canvas.height / 2);
-      }
-    });
-
-    return () => {
-      stop();
-      canvas.removeEventListener('pointerdown', basicAttack);
-      window.removeEventListener('keydown', keydownMove);
-      window.removeEventListener('keyup', keyupMove);
-      joystick.remove();
-      canvas.remove();
-    };
-  };
 }
 
 // ---------- 15. Merge Drop (パズル, スイカゲーム風) ----------
@@ -2375,50 +1023,138 @@ function mountMyMaze(container, { onScore, onHint }, config = {}) {
   };
 }
 
+// ---------- 17. Fill It All (パズル, 自作オリジナル) ----------
+// Grid-covering snake puzzle: step one cell per input (no auto-scroll/timer, unlike Snake),
+// paint every cell of the room without crossing your own trail. Clearing the room advances to
+// a bigger one; touching the trail/a wall ends the run. Own design/implementation — not a copy
+// of any third-party game's code or art, just the same "cover the board without crossing
+// yourself" puzzle idea classic to grid-snake games.
+function mountFillItAll(container, { onScore, onHint }, config = {}) {
+  onHint('下のボタン(WASD/矢印キーもOK)で1マスずつ進み、部屋のマスを全部ぬろう。自分の跡に触れたら終了！');
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  const cell = 26;
+  const cols = Math.max(4, Math.floor(canvas.width / cell));
+  const rows = Math.max(4, Math.floor(canvas.height / cell));
+  const reportBest = makeBestTracker('fillitall', onHint);
+
+  let level = 1, filled, trail, head, score = 0, dead = false, particles = [], levelCells = 0, transitioning = false;
+
+  function levelSize() {
+    // Grows the covered target each level, capped at the full board so later levels stay
+    // beatable within the fixed canvas grid rather than needing an ever-bigger board.
+    return Math.min(cols * rows, 8 + level * 4);
+  }
+
+  function startLevel() {
+    filled = new Set();
+    trail = [];
+    levelCells = levelSize();
+    head = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
+    trail.push(head);
+    filled.add(head.y * cols + head.x);
+    dead = false;
+  }
+  startLevel();
+
+  const dirMap = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+  function step(d) {
+    if (dead || !d || transitioning) return;
+    const nx = head.x + d.x, ny = head.y + d.y;
+    // Bumping the room's edge is just a blocked move (this is a bounded puzzle room, not a
+    // hazard) — only crossing your own trail actually ends the run, matching the original
+    // "尻尾が頭に追いつくとゲームオーバー" self-collision rule.
+    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) { shakeEl(canvas); return; }
+    const idx = ny * cols + nx;
+    if (filled.has(idx)) {
+      dead = true;
+      sfx.gameover(); flashEl(canvas); shakeEl(canvas);
+      reportBest(score);
+      return;
+    }
+    head = { x: nx, y: ny };
+    trail.push(head);
+    filled.add(idx);
+    score++; onScore(score);
+    reportBest(score);
+    spawnBurst(particles, nx * cell + cell / 2, ny * cell + cell / 2, '#31d158', 6);
+    sfx.score(Math.min(3, level));
+    if (filled.size >= levelCells) {
+      sfx.win();
+      score += 10; onScore(score);
+      level++;
+      // Guard against the 320ms celebration pause: without this, extra input arriving before
+      // startLevel() actually resets `filled`/`levelCells` would re-satisfy the same
+      // filled.size >= levelCells check on every further move and stack the +10 bonus
+      // repeatedly for a single level clear.
+      transitioning = true;
+      setTimeout(() => { startLevel(); transitioning = false; }, 320);
+    }
+  }
+  function keydown(e) {
+    const key = {
+      ArrowUp: 'up', w: 'up', W: 'up',
+      ArrowDown: 'down', s: 'down', S: 'down',
+      ArrowLeft: 'left', a: 'left', A: 'left',
+      ArrowRight: 'right', d: 'right', D: 'right',
+    }[e.key];
+    if (key) step(dirMap[key]);
+  }
+  window.addEventListener('keydown', keydown);
+  const dpad = makeDpad(container, (key) => step(dirMap[key]));
+  function tapCanvas() {
+    if (dead) { level = 1; score = 0; onScore(score); startLevel(); }
+  }
+  canvas.addEventListener('pointerdown', tapCanvas);
+
+  const stop = loopRAF((dt) => {
+    ctx.fillStyle = '#101418'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    for (let x = 0; x <= cols; x++) { ctx.beginPath(); ctx.moveTo(x * cell, 0); ctx.lineTo(x * cell, rows * cell); ctx.stroke(); }
+    for (let y = 0; y <= rows; y++) { ctx.beginPath(); ctx.moveTo(0, y * cell); ctx.lineTo(cols * cell, y * cell); ctx.stroke(); }
+    ctx.fillStyle = '#3fa7ff';
+    for (const p of trail) ctx.fillRect(p.x * cell + 1, p.y * cell + 1, cell - 2, cell - 2);
+    ctx.fillStyle = dead ? '#777' : '#ffd23f';
+    ctx.fillRect(head.x * cell + 1, head.y * cell + 1, cell - 2, cell - 2);
+    drawBurst(ctx, particles, dt);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(`Lv.${level}  ${filled.size}/${levelCells}`, 8, 18);
+    if (dead) {
+      ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('タップ/ボタンでリスタート', canvas.width / 2, canvas.height / 2);
+    }
+  });
+
+  return () => {
+    stop();
+    window.removeEventListener('keydown', keydown);
+    canvas.removeEventListener('pointerdown', tapCanvas);
+    dpad.remove();
+    canvas.remove();
+  };
+}
+
 const GAME_DEFS = [
-  { id: 'reaction', title: '反射神経テスト', genre: '反射神経', mount: mountReaction,
-    params: [{ key: 'maxWait', label: '待ち時間の長さ', min: 500, max: 3000, step: 100, default: 1500 }] },
   { id: 'dodge', title: 'ブロック避け', genre: 'アクション', mount: mountDodge,
     params: [{ key: 'blockSpeed', label: 'ブロックの速さ', min: 120, max: 400, step: 20, default: 180 }] },
   { id: 'memory', title: '神経衰弱', genre: '記憶', mount: mountMemory,
     choiceParams: [{ key: 'symbols', label: 'キャラクターを8個選ぶ', count: 8,
       options: ['🐱','🐶','🐼','🦊','🐸','🐵','🦁','🐯','🐰','🐹','🐨','🦄','🐷','🐮','🐔','🦋','🐢','🐙'] }] },
-  { id: 'whack', title: 'モグラたたき', genre: 'アクション', mount: mountWhack,
-    params: [{ key: 'popDuration', label: 'モグラが出ている時間(ms)', min: 400, max: 1200, step: 50, default: 700 }] },
-  { id: 'simon', title: '順番おぼえゲー', genre: '記憶', mount: mountSimon,
-    choiceParams: [{ key: 'colors', label: '色を4個選ぶ', count: 4,
-      options: ['#ff4b4b','#4ea8ff','#ffd23f','#31d158','#ff8ad8','#b06bff','#ff9f4b','#4bffe6'] }] },
   { id: 'flap', title: 'はばたき飛行', genre: 'アクション', mount: mountFlap,
     params: [{ key: 'gravity', label: '重力の強さ', min: 600, max: 1200, step: 50, default: 900 }] },
-  { id: 'mathrush', title: '計算スピード勝負', genre: 'クイズ', mount: mountMathRush,
-    params: [{ key: 'timeLimit', label: '制限時間(ms)', min: 2000, max: 8000, step: 500, default: 5000 }] },
-  { id: 'colormatch', title: '色いくつわかる？', genre: '反射神経', mount: mountColorMatch },
-  { id: 'snake', title: 'へび', genre: 'クラシック', mount: mountSnake,
-    params: [{ key: 'startInterval', label: '初速(ms、小さいほど速い)', min: 80, max: 220, step: 10, default: 140 }] },
   { id: 'slide', title: 'スライド合体パズル', genre: 'パズル', mount: mountSlide },
   { id: 'stack', title: '積み上げタワー', genre: 'タイミング', mount: mountStack,
     params: [{ key: 'speedStart', label: 'ブロックの速さ', min: 80, max: 240, step: 10, default: 140 }] },
   { id: 'aim', title: 'ねらえ！ピタッとタイミング', genre: 'タイミング', mount: mountAim,
     params: [{ key: 'startSpeed', label: 'マーカーの速さ', min: 120, max: 360, step: 20, default: 220 }] },
-  { id: 'flow', title: '色をおいかけろ', genre: '反射神経', mount: mountFlow,
-    params: [{ key: 'startSpeed', label: '落下速度', min: 80, max: 280, step: 20, default: 160 }],
-    choiceParams: [{ key: 'colors', label: '色を4個選ぶ', count: 4,
-      options: ['#ff4b4b', '#4ea8ff', '#31d158', '#ffd23f', '#ff8ad8', '#b06bff', '#ff9f4b', '#4bffe6'] }] },
   { id: 'merge', title: 'フルーツマージ', genre: 'パズル', mount: mountMerge,
     params: [{ key: 'autoDropAfter', label: '自動落下までの時間(秒)', min: 1.5, max: 6, step: 0.5, default: 3.2 }] },
   // No params/choiceParams: the whole "config" IS the user-drawn config.layout grid (see
   // maze-editor.js), there's nothing left to slider-tune once a course is posted.
   { id: 'mymaze', title: '自分のコース', genre: 'アクション', mount: mountMyMaze },
-  ...Object.keys(ELEMENT_CHARACTERS).map((charId) => {
-    const c = ELEMENT_CHARACTERS[charId];
-    return {
-      id: 'element_' + charId,
-      title: `エレメント・アリーナ：${c.name}`,
-      genre: 'アクション',
-      mount: mountElementCharacter(charId),
-      params: [{ key: 'atk', label: '攻撃力', min: Math.round(c.baseAtk * 0.6), max: Math.round(c.baseAtk * 1.8), step: 1, default: c.baseAtk }],
-    };
-  }),
+  // Original puzzle inspired by grid-covering snake games (poki.com/jp/g/longcat) at the
+  // user's request, 2026-08-14 — own code/art, not a copy. See mountFillItAll above.
+  { id: 'fillitall', title: 'ぜんぶぬろう！', genre: 'パズル', mount: mountFillItAll },
 ];
 
 window.GAME_DEFS = GAME_DEFS;
