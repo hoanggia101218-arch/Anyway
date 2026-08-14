@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Anyway</title>
+<link rel="stylesheet" href="style.css?v=11">
+</head>
+<body>
+
+<div id="account-modal" class="hidden">
+  <div class="modal-box">
+    <h1>Anyway</h1>
+    <p>動画の代わりに、ゲームが流れてくる。</p>
+    <button type="button" id="guest-btn" class="btn-ghost">アカウントを作らずに続ける</button>
+
+    <div id="signup-form">
+      <input id="username-input" type="text" placeholder="ユーザー名(表示名、他人と重複OK)" maxlength="16">
+      <input id="userid-input" type="text" placeholder="ユーザーID(@なし、他人と重複不可)" maxlength="20">
+      <input id="email-input" type="email" placeholder="メールアドレス">
+      <input id="password-input" type="password" placeholder="パスワード(6文字以上・大小英字+数字)">
+      <label class="field-label" for="birthdate-input">生年月日</label>
+      <input id="birthdate-input" type="date" max="">
+      <p class="field-hint">13歳未満の方は投稿・いいね・DM・クラブ参加ができません(閲覧・プレイのみ)</p>
+      <button id="start-btn" class="primary">アカウント作成</button>
+      <p class="switch-mode">すでにアカウントをお持ちの方は <a href="#" id="to-login">ログイン</a></p>
+    </div>
+
+    <div id="login-form" class="hidden">
+      <input id="login-email-input" type="email" placeholder="メールアドレス">
+      <input id="login-password-input" type="password" placeholder="パスワード">
+      <button id="login-btn" class="primary">ログイン</button>
+      <p class="switch-mode"><a href="#" id="forgot-password-link">パスワードをお忘れですか？</a></p>
+      <p class="switch-mode">アカウントをお持ちでない方は <a href="#" id="to-signup">新規登録</a></p>
+    </div>
+
+    <div id="reset-request-form" class="hidden">
+      <input id="reset-email-input" type="email" placeholder="メールアドレス">
+      <button id="reset-request-btn" class="primary">再設定メールを送る</button>
+      <p class="switch-mode"><a href="#" id="back-to-login-from-reset">ログインに戻る</a></p>
+    </div>
+
+    <div id="reset-password-form" class="hidden">
+      <p style="font-size:13px;opacity:0.8;margin:0 0 8px;">新しいパスワードを設定してください</p>
+      <input id="new-password-input" type="password" placeholder="新しいパスワード(6文字以上・大小英字+数字)">
+      <button id="reset-password-btn" class="primary">パスワードを更新</button>
+    </div>
+
+    <p id="auth-error" class="error hidden"></p>
+    <p class="switch-mode"><a href="#" id="show-legal-link">利用規約・プライバシーポリシー</a></p>
+  </div>
+</div>
+
+<div id="legal-modal" class="hidden">
+  <div class="legal-box">
+    <button class="panel-back" id="legal-close">← 閉じる</button>
+    <div id="legal-content" class="legal-content"></div>
+  </div>
+</div>
+
+<div id="logo">Anyway</div>
+<div id="user-bar"></div>
+
+<div id="feed">
+  <div id="loader" style="height:1px;"></div>
+</div>
+
+<div id="edit-panel" class="panel hidden">
+  <div class="panel-header"><button class="panel-back" data-close="edit-panel">←</button><span>今の投稿を編集</span></div>
+  <div class="panel-body" id="edit-panel-body"></div>
+</div>
+
+<div id="create-panel" class="panel hidden">
+  <div class="panel-header"><button class="panel-back" data-close="create-panel">←</button><span>新規投稿を作る</span></div>
+  <div class="panel-body" id="create-panel-body"></div>
+</div>
+
+<div id="dm-panel" class="panel hidden">
+  <div class="panel-header"><button class="panel-back" data-close="dm-panel">←</button><span id="dm-panel-title">メッセージ</span></div>
+  <div class="panel-body" id="dm-panel-body"></div>
+</div>
+
+<div id="profile-panel" class="panel hidden">
+  <div class="panel-header"><button class="panel-back" data-close="profile-panel">←</button><span>プロフィール</span></div>
+  <div class="panel-body" id="profile-panel-body"></div>
+</div>
+
+<div id="search-panel" class="panel hidden">
+  <div class="panel-header"><button class="panel-back" data-close="search-panel">←</button><span>検索</span></div>
+  <div class="panel-body">
+    <input type="text" id="search-input" class="create-title-input" placeholder="ゲーム名 または @ユーザーIDで検索">
+    <div id="search-results" style="margin-top:16px;"></div>
+  </div>
+</div>
+
+<div id="club-panel" class="panel hidden">
+  <div class="panel-header"><button class="panel-back" id="club-panel-back">←</button><span id="club-panel-title">クラブ</span></div>
+  <div class="panel-body" id="club-panel-body"></div>
+</div>
+
+<div id="elements-panel" class="panel hidden">
+  <div class="panel-header"><button class="panel-back" data-close="elements-panel">←</button><span>精霊図鑑</span></div>
+  <div class="panel-body elements-panel-body">
+    <iframe id="elements-frame" src="" title="精霊図鑑" loading="lazy"></iframe>
+  </div>
+</div>
+
+<div id="bottom-nav">
+  <button class="nav-btn" data-tab="edit"><span class="nav-icon">📝</span></button>
+  <button class="nav-btn" data-tab="home"><span class="nav-icon">🎮</span></button>
+  <button class="nav-btn create-btn" data-tab="create"><span class="nav-icon">+</span><span class="nav-badge">NEW</span></button>
+  <button class="nav-btn" data-tab="dm"><span class="nav-icon">💬</span><span class="nav-badge hidden" id="dm-badge">0</span></button>
+  <button class="nav-btn" data-tab="profile"><span class="nav-icon">👤</span></button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="games.js?v=19"></script>
+<script src="maze-editor.js?v=1"></script>
+<script src="maps.js?v=2"></script>
+<!-- Classic (non-module) three.js build on purpose: this app is opened directly via file://
+     as well as http(s), and file:// blocks type="module"/import script loading entirely
+     (Chrome/Edge CORS restriction) -- an importmap + ES modules silently fail there.
+     r147 specifically: the last release with legacy non-module examples/js/ builds (r148+
+     dropped them, ES-modules-only) -- but new enough that GLTFLoader/MeshPhysicalMaterial
+     understand Blaze's glTF (which uses a KHR_materials_sheen extension); r128 crashed
+     rendering it with "uniform3fv ... must have a callable @@iterator" from a sheen uniform
+     the older material support couldn't set up correctly. -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="spirit-models.js?v=4"></script>
+<script src="map-editor.js?v=11"></script>
+<script src="duel.js?v=3"></script>
+<script src="call.js?v=1"></script>
+<script src="app.js?v=35"></script>
+</body>
+</html>
