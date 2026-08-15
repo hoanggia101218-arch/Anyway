@@ -1134,6 +1134,350 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
   };
 }
 
+// ---------- 18. Sky Duel (3D空戦, 自作オリジナル) ----------
+// User request (2026-08-14): an original 3D air-combat game, after seeing a video of an AI
+// building an impressive one. Only the video's title was fetchable (not its transcript/prompts),
+// so this is built fresh from this project's own established Three.js patterns (see
+// spirit-models.js's scene/renderer/animate setup) rather than referencing that video's actual
+// content. Classic (non-module) THREE + OrbitControls + GLTFLoader are already loaded globally
+// by index.html for the character gallery/map editor; this reuses that same global THREE
+// instead of adding a new dependency. All geometry is procedural primitives (boxes/cones/
+// cylinders), matching how every other character/prop in this codebase is built — no new
+// external model/asset files.
+function buildJet(color, scale = 1) {
+  const g = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.35 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.6 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x8fd8ff, roughness: 0.15, metalness: 0.5, emissive: 0x1a3a4a, emissiveIntensity: 0.3 });
+
+  const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.42, 2.6, 8), bodyMat);
+  fuselage.rotation.x = Math.PI / 2;
+  g.add(fuselage);
+
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.9, 8), darkMat);
+  nose.rotation.x = -Math.PI / 2;
+  nose.position.z = -1.75;
+  g.add(nose);
+
+  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.26, 8, 6), glassMat);
+  cockpit.position.set(0, 0.28, -0.5);
+  cockpit.scale.set(1, 0.8, 1.4);
+  g.add(cockpit);
+
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.08, 1.0), bodyMat);
+  wing.position.set(0, -0.05, 0.1);
+  g.add(wing);
+
+  const tailWing = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.06, 0.55), bodyMat);
+  tailWing.position.set(0, 0.05, 1.15);
+  g.add(tailWing);
+
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.75, 0.85), darkMat);
+  fin.position.set(0, 0.42, 1.15);
+  g.add(fin);
+
+  const engineGeo = new THREE.CylinderGeometry(0.16, 0.2, 0.5, 6);
+  const engineMat = new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.5, metalness: 0.6, emissive: 0xff6a2b, emissiveIntensity: 0.4 });
+  for (const side of [-1, 1]) {
+    const engine = new THREE.Mesh(engineGeo, engineMat);
+    engine.rotation.x = Math.PI / 2;
+    engine.position.set(side * 0.9, -0.05, 1.2);
+    g.add(engine);
+  }
+
+  g.scale.setScalar(scale);
+  g.userData.hitRadius = 1.3 * scale;
+  return g;
+}
+
+function disposeObject3D(obj) {
+  obj.traverse((node) => {
+    if (node.geometry) node.geometry.dispose();
+  });
+}
+
+function mountSkyDuel(container, { onScore, onHint }, config = {}) {
+  onHint('ジョイスティックで操縦、自動で発射！敵を撃墜してスコアを稼ごう。右下ボタンでブースト');
+  container.style.position = 'relative';
+  const width = container.clientWidth, height = container.clientHeight;
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(width, height);
+  renderer.domElement.style.display = 'block';
+  container.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const skyColor = 0x8fd0ff;
+  scene.background = new THREE.Color(skyColor);
+  scene.fog = new THREE.Fog(skyColor, 60, 260);
+
+  const camera = new THREE.PerspectiveCamera(62, width / height, 0.1, 1000);
+
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x3a5a2a, 1.0);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+  sun.position.set(40, 80, 20);
+  scene.add(sun);
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(4000, 4000),
+    new THREE.MeshStandardMaterial({ color: 0x3f7d3a, roughness: 1 })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -40;
+  scene.add(ground);
+
+  const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.85 });
+  const clouds = new THREE.Group();
+  for (let i = 0; i < 26; i++) {
+    const cluster = new THREE.Group();
+    const puffs = 2 + Math.floor(Math.random() * 3);
+    for (let j = 0; j < puffs; j++) {
+      const puff = new THREE.Mesh(new THREE.SphereGeometry(3 + Math.random() * 2.5, 7, 6), cloudMat);
+      puff.position.set((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 1.5, (Math.random() - 0.5) * 4);
+      cluster.add(puff);
+    }
+    cluster.position.set((Math.random() - 0.5) * 500, 10 + Math.random() * 70, (Math.random() - 0.5) * 500);
+    clouds.add(cluster);
+  }
+  scene.add(clouds);
+
+  const player = buildJet(0x3fa7ff, 1);
+  player.rotation.order = 'YXZ';
+  player.position.set(0, 20, 0);
+  scene.add(player);
+
+  let pitch = 0, roll = 0, pitchTarget = 0, rollTarget = 0, yaw = 0;
+  let speed = 26, boosting = false;
+  let score = 0, health = 5, dead = false, gameOverAt = 0;
+  const maxHealth = 5;
+  const reportBest = makeBestTracker('skyduel', onHint);
+
+  const bulletGeo = new THREE.SphereGeometry(0.1, 6, 6);
+  const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffe15a });
+  const enemyBulletMat = new THREE.MeshBasicMaterial({ color: 0xff4b4b });
+  let bullets = []; // { mesh, vel, owner: 'player'|'enemy' }
+  let enemies = []; // { group, spawnT, fireT }
+  let particles = []; // { mesh, vel, life, maxLife }
+
+  const particleGeo = new THREE.BoxGeometry(0.22, 0.22, 0.22);
+  function explode(pos, color) {
+    const mat = new THREE.MeshBasicMaterial({ color });
+    for (let i = 0; i < 10; i++) {
+      const mesh = new THREE.Mesh(particleGeo, mat);
+      mesh.position.copy(pos);
+      scene.add(mesh);
+      const a = Math.random() * Math.PI * 2, b = Math.random() * Math.PI;
+      const spd = 6 + Math.random() * 10;
+      particles.push({
+        mesh,
+        vel: new THREE.Vector3(Math.sin(b) * Math.cos(a), Math.cos(b), Math.sin(b) * Math.sin(a)).multiplyScalar(spd),
+        life: 0.6, maxLife: 0.6,
+      });
+    }
+  }
+
+  function spawnEnemy() {
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+    const side = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
+    const ahead = player.position.clone()
+      .add(forward.multiplyScalar(70 + Math.random() * 40))
+      .add(side.multiplyScalar((Math.random() - 0.5) * 60))
+      .add(new THREE.Vector3(0, (Math.random() - 0.5) * 24, 0));
+    const jet = buildJet(0xff4b4b, 1);
+    jet.position.copy(ahead);
+    jet.lookAt(player.position);
+    scene.add(jet);
+    enemies.push({ group: jet, fireT: 1 + Math.random() * 2 });
+  }
+
+  let spawnTimer = 1.5;
+  const joystick = makeJoystick(container, ({ x, y }) => {
+    rollTarget = x * 0.9;
+    pitchTarget = -y * 0.6;
+  });
+  const boostBtn = document.createElement('button');
+  boostBtn.className = 'skyduel-boost-btn';
+  boostBtn.textContent = '🚀';
+  boostBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); boosting = true; });
+  boostBtn.addEventListener('pointerup', (e) => { e.stopPropagation(); boosting = false; });
+  boostBtn.addEventListener('pointercancel', () => { boosting = false; });
+  container.appendChild(boostBtn);
+
+  const hud = document.createElement('div');
+  hud.className = 'skyduel-hud';
+  hud.innerHTML = `<div class="skyduel-score">0</div><div class="skyduel-health"><div class="skyduel-health-fill"></div></div>`;
+  container.appendChild(hud);
+  const scoreEl = hud.querySelector('.skyduel-score');
+  const healthFillEl = hud.querySelector('.skyduel-health-fill');
+
+  const overlay = document.createElement('div');
+  overlay.className = 'skyduel-overlay hidden';
+  overlay.textContent = 'タップでリスタート';
+  container.appendChild(overlay);
+
+  function resetRun() {
+    for (const b of bullets) { scene.remove(b.mesh); }
+    bullets = [];
+    for (const en of enemies) { scene.remove(en.group); disposeObject3D(en.group); }
+    enemies = [];
+    player.position.set(0, 20, 0);
+    pitch = 0; roll = 0; yaw = 0; pitchTarget = 0; rollTarget = 0;
+    player.rotation.set(0, 0, 0);
+    speed = 26;
+    score = 0; health = maxHealth; dead = false;
+    scoreEl.textContent = '0';
+    healthFillEl.style.width = '100%';
+    overlay.classList.add('hidden');
+    spawnTimer = 1.5;
+  }
+
+  function takeDamage() {
+    health = Math.max(0, health - 1);
+    healthFillEl.style.width = (health / maxHealth * 100) + '%';
+    flashEl(container, 160);
+    sfx.bad();
+    if (health <= 0 && !dead) {
+      dead = true;
+      gameOverAt = performance.now();
+      explode(player.position, 0xffb020);
+      sfx.gameover();
+      reportBest(score);
+      setTimeout(() => overlay.classList.remove('hidden'), 400);
+    }
+  }
+
+  function fireBullet(from, quat, owner) {
+    const mesh = new THREE.Mesh(bulletGeo, owner === 'player' ? bulletMat : enemyBulletMat);
+    mesh.position.copy(from);
+    scene.add(mesh);
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+    bullets.push({ mesh, vel: dir.multiplyScalar(owner === 'player' ? 110 : 60), owner, life: 3 });
+  }
+
+  let playerFireTimer = 0;
+
+  function onTap() {
+    if (dead && performance.now() - gameOverAt > 350) resetRun();
+  }
+  container.addEventListener('pointerdown', onTap);
+
+  const clock = { last: performance.now() };
+  const stop = loopRAF((dt) => {
+    if (!dead) {
+      // Arcade bank-turn flight model: roll/pitch ease toward joystick targets, yaw derives
+      // from the current bank angle (rolling right gradually turns the nose right), and the
+      // plane always moves forward along its own local -Z axis -- simpler and far more
+      // controllable on touch than full free-flight physics.
+      roll += (rollTarget - roll) * Math.min(1, dt * 5);
+      pitch += (pitchTarget - pitch) * Math.min(1, dt * 5);
+      yaw -= roll * 0.8 * dt;
+      player.rotation.set(pitch, yaw, roll);
+      const targetSpeed = boosting ? 46 : 26;
+      speed += (targetSpeed - speed) * Math.min(1, dt * 2);
+      player.translateZ(-speed * dt);
+      if (player.position.y < -30) { player.position.y = -30; takeDamage(); }
+      if (player.position.y > 140) player.position.y = 140;
+
+      playerFireTimer -= dt;
+      if (playerFireTimer <= 0) {
+        playerFireTimer = 0.22;
+        const nosePos = player.position.clone().add(new THREE.Vector3(0, 0, -1.8).applyQuaternion(player.quaternion));
+        fireBullet(nosePos, player.quaternion, 'player');
+      }
+
+      spawnTimer -= dt;
+      const maxEnemies = Math.min(6, 2 + Math.floor(score / 4));
+      if (spawnTimer <= 0 && enemies.length < maxEnemies) {
+        spawnTimer = Math.max(0.6, 1.8 - score * 0.03);
+        spawnEnemy();
+      }
+
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const en = enemies[i];
+        const toPlayer = player.position.clone().sub(en.group.position);
+        const dist = toPlayer.length();
+        if (dist > 220) { scene.remove(en.group); disposeObject3D(en.group); enemies.splice(i, 1); continue; }
+        en.group.lookAt(player.position);
+        en.group.translateZ(-16 * dt);
+        en.fireT -= dt;
+        if (en.fireT <= 0 && dist < 90) {
+          en.fireT = 1.6 + Math.random() * 1.2;
+          fireBullet(en.group.position.clone(), en.group.quaternion, 'enemy');
+        }
+        if (dist < 2.6) {
+          explode(en.group.position, 0xff6a2b);
+          scene.remove(en.group); disposeObject3D(en.group); enemies.splice(i, 1);
+          takeDamage();
+        }
+      }
+
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.mesh.position.addScaledVector(b.vel, dt);
+        b.life -= dt;
+        let hit = false;
+        if (b.owner === 'player') {
+          for (let j = enemies.length - 1; j >= 0; j--) {
+            if (b.mesh.position.distanceTo(enemies[j].group.position) < 1.6) {
+              explode(enemies[j].group.position, 0xffd23f);
+              scene.remove(enemies[j].group); disposeObject3D(enemies[j].group); enemies.splice(j, 1);
+              score++; onScore(score); reportBest(score);
+              scoreEl.textContent = String(score);
+              sfx.score(Math.min(score, 10));
+              hit = true;
+              break;
+            }
+          }
+        } else if (b.mesh.position.distanceTo(player.position) < 1.4) {
+          hit = true;
+          takeDamage();
+        }
+        if (hit || b.life <= 0 || b.mesh.position.distanceTo(player.position) > 260) {
+          scene.remove(b.mesh);
+          bullets.splice(i, 1);
+        }
+      }
+
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.life -= dt;
+        if (p.life <= 0) { scene.remove(p.mesh); particles.splice(i, 1); continue; }
+        p.vel.y -= 9 * dt;
+        p.mesh.position.addScaledVector(p.vel, dt);
+        p.mesh.scale.setScalar(Math.max(0, p.life / p.maxLife));
+      }
+    }
+
+    const camOffset = new THREE.Vector3(0, 2.4, 7.5);
+    const desired = camOffset.clone().applyQuaternion(player.quaternion).add(player.position);
+    camera.position.lerp(desired, 1 - Math.pow(0.0008, dt));
+    const lookTarget = player.position.clone().add(new THREE.Vector3(0, 0.6, -8).applyQuaternion(player.quaternion));
+    camera.lookAt(lookTarget);
+
+    renderer.render(scene, camera);
+  });
+
+  return () => {
+    stop();
+    container.removeEventListener('pointerdown', onTap);
+    joystick.remove();
+    boostBtn.remove();
+    hud.remove();
+    overlay.remove();
+    for (const b of bullets) scene.remove(b.mesh);
+    for (const en of enemies) { scene.remove(en.group); disposeObject3D(en.group); }
+    for (const p of particles) scene.remove(p.mesh);
+    disposeObject3D(player);
+    disposeObject3D(clouds);
+    ground.geometry.dispose(); ground.material.dispose();
+    bulletGeo.dispose(); bulletMat.dispose(); enemyBulletMat.dispose(); particleGeo.dispose(); cloudMat.dispose();
+    renderer.dispose();
+    renderer.domElement.remove();
+  };
+}
+
 const GAME_DEFS = [
   { id: 'dodge', title: 'ブロック避け', genre: 'アクション', mount: mountDodge,
     params: [{ key: 'blockSpeed', label: 'ブロックの速さ', min: 120, max: 400, step: 20, default: 180 }] },
@@ -1155,6 +1499,8 @@ const GAME_DEFS = [
   // Original puzzle inspired by grid-covering snake games (poki.com/jp/g/longcat) at the
   // user's request, 2026-08-14 — own code/art, not a copy. See mountFillItAll above.
   { id: 'fillitall', title: 'ぜんぶぬろう！', genre: 'パズル', mount: mountFillItAll },
+  // Original 3D air-combat game (2026-08-14 user request). See mountSkyDuel above.
+  { id: 'skyduel', title: 'スカイデュエル', genre: 'アクション', mount: mountSkyDuel },
 ];
 
 window.GAME_DEFS = GAME_DEFS;

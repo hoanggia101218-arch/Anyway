@@ -1181,6 +1181,7 @@ async function initFeed(user) {
       <ul class="map-feature-list">${map.features.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}</ul>
       <p class="map-card-history">${escapeHtml(map.history)}</p>
       <button class="post-btn map-select-btn">選択</button>
+      <button class="post-btn map-3d-btn" style="margin-top:8px;background:linear-gradient(180deg, rgba(78,168,255,0.9), rgba(50,120,220,0.75));">🗺️ 3Dで配置して投稿</button>
     `;
     const tile = card.querySelector('.map-photo-tile');
     let photoIdx = 0;
@@ -1197,7 +1198,64 @@ async function initFeed(user) {
     card.querySelector('.map-select-btn').addEventListener('click', () => {
       renderTemplateGrid(map);
     });
+    card.querySelector('.map-3d-btn').addEventListener('click', () => {
+      render3DSceneEditor(map);
+    });
     return card;
+  }
+
+  // 3D scene editor, restored 2026-08-14 as its own path (decoupled from Element Arena, which
+  // owned this screen before being deleted along with 7 other games). map-editor.js itself is
+  // untouched and still hard-requires placing at least one "character" before its confirm
+  // button enables (see its own me-confirm button / primaryCharPlacement gating) -- rather than
+  // edit that shared file, this feeds it a small generic decorative avatar roster (plain colors,
+  // no gameplay stats) so placement still works, and simply ignores the returned charId: the
+  // 3D placement here is a creative "set the scene" step only, it doesn't feed into any specific
+  // game's mechanics right now (no surviving game reads config.mapLayout). After confirming,
+  // this hands off to the same plain game picker (renderTemplateGrid) used by the "選択" button,
+  // so the user still picks which actual game the post plays as.
+  let activeMapEditor = null;
+  function waitForMapEditor(cb) {
+    if (window.MapEditor) { cb(); return; }
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries += 1;
+      if (window.MapEditor || tries > 50) { clearInterval(iv); cb(); }
+    }, 100);
+  }
+  const SCENE_AVATARS = [
+    { id: 'red', name: 'レッド', color: '#ff4b4b', icon: '🔴' },
+    { id: 'blue', name: 'ブルー', color: '#4ea8ff', icon: '🔵' },
+    { id: 'green', name: 'グリーン', color: '#31d158', icon: '🟢' },
+    { id: 'yellow', name: 'イエロー', color: '#ffd23f', icon: '🟡' },
+    { id: 'purple', name: 'パープル', color: '#b06bff', icon: '🟣' },
+    { id: 'white', name: 'ホワイト', color: '#f5f5f5', icon: '⚪' },
+  ];
+  function render3DSceneEditor(map) {
+    const body = document.getElementById('create-panel-body');
+    body.innerHTML = '';
+    if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
+    const container = document.createElement('div');
+    container.className = 'map-editor-container';
+    body.appendChild(container);
+    waitForMapEditor(() => {
+      if (!window.MapEditor) {
+        container.textContent = '3Dエディタの読み込みに失敗しました。通信状況を確認してもう一度お試しください。';
+        return;
+      }
+      const bgPhoto = map.photos && map.photos[0];
+      activeMapEditor = window.MapEditor.mount(container, {
+        mapName: map.name,
+        mapPhotoUrl: bgPhoto && bgPhoto.image,
+        mapColor: (bgPhoto && bgPhoto.color) || '#222',
+        characters: SCENE_AVATARS,
+        onBack: () => { if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; } renderCreatePanel(); },
+        onConfirm: () => {
+          if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
+          renderTemplateGrid(map);
+        },
+      });
+    });
   }
 
   // Plain game picker for "post about this map" (2026-08-14): the previous version of this
@@ -1207,9 +1265,10 @@ async function initFeed(user) {
   // survival. Element Arena was removed wholesale (still just 2D canvas sprites despite being
   // pitched as a 3D showcase), which took the rule selector and the character roster down with
   // it — neither had anything left to offer once there was no Element Arena game to configure.
-  // Reverted to the simpler original design: a plain list of the remaining GAME_DEFS (excluding
-  // 'mymaze', which already has its own dedicated drawing card above) that posts about the
-  // selected map via the same renderCreateForm() used everywhere else, just with mapName set.
+  // The plain list below (excluding 'mymaze', which already has its own dedicated drawing card
+  // above) is reused as the second half of both the "選択" quick path and the "🗺️ 3Dで配置して
+  // 投稿" path above -- posts about the selected map via the same renderCreateForm() used
+  // everywhere else, just with mapName set.
   function renderTemplateGrid(map) {
     const body = document.getElementById('create-panel-body');
     body.innerHTML = '';
