@@ -869,12 +869,16 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
       ctx.beginPath(); ctx.moveTo(activeX, dropY + r * 2); ctx.lineTo(activeX, floorY); ctx.stroke();
       ctx.setLineDash([]);
 
+      // Card chrome (.overlay-top: search button + genre tag) sits at top:16px, right:16px,
+      // reaching roughly to y=48 on screen -- drawing this canvas-native "NEXT" indicator at
+      // y=16 (its original position) put it directly behind/through that pill, unreadable
+      // wherever they overlapped. Starting at y=66 clears it with margin.
       ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      ctx.fillText('NEXT', canvas.width - wallX - 22, 16);
+      ctx.fillText('NEXT', canvas.width - wallX - 22, 66);
       const nr = Math.min(16, radiusFor(nextTier) * 0.55);
-      ctx.beginPath(); ctx.fillStyle = MERGE_FRUITS[nextTier].color; ctx.arc(canvas.width - wallX - 22, 40, nr, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.fillStyle = MERGE_FRUITS[nextTier].color; ctx.arc(canvas.width - wallX - 22, 90, nr, 0, Math.PI * 2); ctx.fill();
       ctx.font = `${Math.round(nr * 1.3)}px sans-serif`; ctx.fillStyle = '#fff';
-      ctx.fillText(MERGE_FRUITS[nextTier].emoji, canvas.width - wallX - 22, 40 + nr * 0.05);
+      ctx.fillText(MERGE_FRUITS[nextTier].emoji, canvas.width - wallX - 22, 90 + nr * 0.05);
     }
 
     for (let i = popText.length - 1; i >= 0; i--) {

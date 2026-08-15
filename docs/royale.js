@@ -68,7 +68,7 @@
     let lobbyDeadline = performance.now() + LOBBY_WAIT_MS;
     const burst = [];
 
-    onHint('マッチング中… 他プレイヤーを待っています');
+    onHint(gt('royale_hint_waiting', 'マッチング中… 他プレイヤーを待っています'));
 
     function aliveRealIds() { return Object.keys(remote).filter((id) => remote[id].alive !== false).concat(me.alive ? [myId] : []); }
     function aliveBotList() { return isHost ? bots.filter((b) => b.alive) : Object.keys(remoteBots).map((id) => remoteBots[id]).filter((b) => b.alive); }
@@ -96,7 +96,7 @@
         recomputeHost();
         if (phase === 'lobby') {
           const n = Object.keys(channel.presenceState()).length;
-          onHint(`マッチング中… (${n}/${TARGET_PLAYERS}人、まもなくボットで補充)`);
+          onHint(gt('royale_hint_waiting_count', 'マッチング中… ({n}/{max}人、まもなくボットで補充)').replace('{n}', n).replace('{max}', TARGET_PLAYERS));
         }
         Object.keys(remote).forEach((id) => { if (!channel.presenceState()[id]) delete remote[id]; });
       })
@@ -134,7 +134,7 @@
         }
       })
       .on('broadcast', { event: 'buff' }, ({ payload }) => {
-        if (payload && payload.id === myId) { buffUntil = performance.now() + BUFF_DURATION_MS; onHint('⚡ 撃破ボーナス！ 少しの間パワーアップ！'); }
+        if (payload && payload.id === myId) { buffUntil = performance.now() + BUFF_DURATION_MS; onHint(gt('royale_hint_buff', '⚡ 撃破ボーナス！ 少しの間パワーアップ！')); }
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED' && !closed) await channel.track({ joined_at: new Date().toISOString(), color: myColor });
@@ -149,7 +149,7 @@
         me.alive = false;
         channel.send({ type: 'broadcast', event: 'death', payload: { id: myId } });
         if (lastAttacker) channel.send({ type: 'broadcast', event: 'buff', payload: { id: lastAttacker } });
-        onHint('やられた… 観戦モード');
+        onHint(gt('royale_hint_defeated', 'やられた… 観戦モード'));
         checkWin();
       }
     }
@@ -157,7 +157,7 @@
       bot.hp = Math.max(0, bot.hp - dmg);
       if (bot.hp <= 0 && bot.alive) {
         bot.alive = false;
-        if (attackerId === myId) { buffUntil = performance.now() + BUFF_DURATION_MS; onHint('⚡ ' + bot.name + 'を倒した！パワーアップ！'); }
+        if (attackerId === myId) { buffUntil = performance.now() + BUFF_DURATION_MS; onHint(gt('royale_hint_kill', '⚡ {name}を倒した！パワーアップ！').replace('{name}', bot.name)); }
         else channel.send({ type: 'broadcast', event: 'buff', payload: { id: attackerId } });
         checkWin();
       }
@@ -169,8 +169,8 @@
       if (survivors <= 1) {
         phase = 'done';
         const iWon = me.alive;
-        if (iWon) { onScore(1); onHint('🏆 勝利！最後の1人になった！'); sfx.win(); }
-        else { onHint('タップでもう一度マッチングする'); sfx.gameover(); }
+        if (iWon) { onScore(1); onHint(gt('royale_hint_win', '🏆 勝利！最後の1人になった！')); sfx.win(); }
+        else { onHint(gt('royale_hint_retry', 'タップでもう一度マッチングする')); sfx.gameover(); }
       }
     }
 
@@ -188,9 +188,9 @@
             state: 'seek', attackCd: 0, target: null,
           };
         });
-        onHint(botCount > 0 ? `対戦開始！ボット${botCount}体を含む${TARGET_PLAYERS}人の生き残りをかけたバトル！` : '対戦開始！');
+        onHint(botCount > 0 ? gt('royale_hint_start_bots', '対戦開始！ボット{bots}体を含む{total}人の生き残りをかけたバトル！').replace('{bots}', botCount).replace('{total}', TARGET_PLAYERS) : gt('royale_hint_start', '対戦開始！'));
       } else {
-        onHint('対戦開始！');
+        onHint(gt('royale_hint_start', '対戦開始！'));
       }
     }
 
@@ -214,7 +214,7 @@
       spawnBurst(burst, toScreen(me.x, me.y)[0], toScreen(me.x, me.y)[1], myColor, 8);
     }
     function onTap() {
-      if (phase === 'done' && !me.alive) { if (onHint) onHint('もう一度マッチングするには、この投稿を再読み込みしてください'); return; }
+      if (phase === 'done' && !me.alive) { if (onHint) onHint(gt('royale_hint_reload', 'もう一度マッチングするには、この投稿を再読み込みしてください')); return; }
       tryAttack();
     }
     canvas.addEventListener('pointerdown', onTap);
@@ -350,7 +350,7 @@
 
       ctx.fillStyle = '#fff'; ctx.font = '13px sans-serif'; ctx.textAlign = 'left';
       const survivors = aliveRealIds().length + aliveBotList().length;
-      ctx.fillText(phase === 'lobby' ? 'マッチング中…' : `生存: ${survivors}人`, 10, 20);
+      ctx.fillText(phase === 'lobby' ? gt('royale_matching', 'マッチング中…') : gt('royale_survivors', '生存: {n}人').replace('{n}', survivors), 10, 20);
     });
 
     return () => {
