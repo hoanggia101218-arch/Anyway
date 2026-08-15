@@ -251,6 +251,15 @@ html, body {
   background: rgba(0,0,0,0.25); pointer-events: none;
 }
 .skyduel-overlay.hidden { display: none; }
+.skyduel-reticle {
+  position: absolute; top: 50%; left: 50%; width: 30px; height: 30px;
+  transform: translate(-50%, -50%); z-index: 5; pointer-events: none; opacity: 0.65;
+}
+.skyduel-reticle-h, .skyduel-reticle-v {
+  position: absolute; background: #7dffb0; box-shadow: 0 0 4px rgba(125,255,176,0.8);
+}
+.skyduel-reticle-h { top: 50%; left: 4px; right: 4px; height: 2px; transform: translateY(-1px); }
+.skyduel-reticle-v { left: 50%; top: 4px; bottom: 4px; width: 2px; transform: translateX(-1px); }
 
 #bottom-nav {
   position: fixed; bottom: 0; left: 0; right: 0; height: 64px; z-index: 30;
@@ -575,3 +584,17 @@ html, body {
 .template-game-card:active { background: rgba(254,44,85,0.22); border-color: rgba(254,44,85,0.6); }
 .template-game-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
 .template-game-genre { font-size: 11px; opacity: 0.65; }
+
+/* task55 (2026-08-14, Toshiba): 言語セレクター。account-modal(登録/ログイン)とマイページの
+   両方で同じ見た目を使い回す(i18n.js の buildSelector() が生成する <select> に付与)。 */
+.i18n-lang-select {
+  display: block; width: 100%; margin: 0 0 14px; padding: 8px 10px;
+  border-radius: 10px; border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.08); color: #fff; font-size: 13px;
+  appearance: none; -webkit-appearance: none;
+}
+.i18n-lang-select option { background: #1a1a1f; color: #fff; }
+#account-modal-lang-slot { display: flex; justify-content: flex-end; margin-bottom: -4px; }
+#account-modal-lang-slot .i18n-lang-select { width: auto; margin: 0; padding: 6px 8px; font-size: 12px; }
+.profile-lang-row { padding: 14px 16px; }
+.profile-lang-row label { display: block; font-size: 12px; opacity: 0.7; margin-bottom: 6px; }

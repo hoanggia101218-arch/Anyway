@@ -1208,22 +1208,60 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  const skyColor = 0x8fd0ff;
-  scene.background = new THREE.Color(skyColor);
-  scene.fog = new THREE.Fog(skyColor, 60, 260);
+  // Golden-hour gradient sky as a tiny generated canvas texture, not an image asset -- keeps
+  // the "zero external files, everything built at runtime" approach used everywhere else in
+  // this file, while giving the horizon some atmosphere instead of a single flat sky color.
+  const skyCanvas = document.createElement('canvas');
+  skyCanvas.width = 2; skyCanvas.height = 256;
+  const skyCtx = skyCanvas.getContext('2d');
+  const skyGrad = skyCtx.createLinearGradient(0, 0, 0, 256);
+  skyGrad.addColorStop(0, '#4a7fd6');
+  skyGrad.addColorStop(0.55, '#a9c9e8');
+  skyGrad.addColorStop(0.78, '#ffcf9a');
+  skyGrad.addColorStop(1, '#ff9a6b');
+  skyCtx.fillStyle = skyGrad;
+  skyCtx.fillRect(0, 0, 2, 256);
+  const skyTex = new THREE.CanvasTexture(skyCanvas);
+  scene.background = skyTex;
+  const fogColor = 0xffc79a;
+  scene.fog = new THREE.Fog(fogColor, 60, 260);
 
   const camera = new THREE.PerspectiveCamera(62, width / height, 0.1, 1000);
+  const baseFov = 62;
 
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x3a5a2a, 1.0);
+  const hemi = new THREE.HemisphereLight(0xffe8c8, 0x2a4a6a, 1.0);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-  sun.position.set(40, 80, 20);
+  const sun = new THREE.DirectionalLight(0xffddb0, 1.5);
+  sun.position.set(40, 60, -30);
   scene.add(sun);
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(4000, 4000),
-    new THREE.MeshStandardMaterial({ color: 0x3f7d3a, roughness: 1 })
-  );
+  // Animated ocean via a vertex-displacement ShaderMaterial (two overlapping sine waves,
+  // sampled per-vertex) instead of a flat ground plane or a texture asset -- same "procedural
+  // shader water" approach the reference video used to get a lot of visual mileage for free.
+  const oceanMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uColorDeep: { value: new THREE.Color(0x0f4a68) }, uColorShallow: { value: new THREE.Color(0x3fa0c0) } },
+    vertexShader: `
+      uniform float uTime;
+      varying float vHeight;
+      void main() {
+        vec3 pos = position;
+        float h = sin(pos.x * 0.045 + uTime * 0.7) * 1.6 + sin(pos.y * 0.03 - uTime * 0.5) * 1.3;
+        pos.z += h;
+        vHeight = h;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uColorDeep;
+      uniform vec3 uColorShallow;
+      varying float vHeight;
+      void main() {
+        float t = clamp(vHeight * 0.3 + 0.5, 0.0, 1.0);
+        gl_FragColor = vec4(mix(uColorDeep, uColorShallow, t), 1.0);
+      }
+    `,
+  });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000, 80, 80), oceanMat);
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -40;
   scene.add(ground);
@@ -1250,6 +1288,7 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
 
   let pitch = 0, roll = 0, pitchTarget = 0, rollTarget = 0, yaw = 0;
   let speed = 26, boosting = false;
+  let fovPulse = 0; // brief FOV widen on a kill, decays each frame -- cheap "impact" punch
   let score = 0, health = 5, dead = false, gameOverAt = 0;
   const maxHealth = 5;
   const reportBest = makeBestTracker('skyduel', onHint);
@@ -1275,6 +1314,29 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
         vel: new THREE.Vector3(Math.sin(b) * Math.cos(a), Math.cos(b), Math.sin(b) * Math.sin(a)).multiplyScalar(spd),
         life: 0.6, maxLife: 0.6,
       });
+    }
+  }
+
+  // Wingtip vapor: small white puffs shed from both wingtips while banking hard, fading fast.
+  // Cheap (reuses the same particle list/geometry style as explosions) but reads as "hard
+  // turn" the way condensation vapor does on a real fighter under high-G maneuvers.
+  const vaporMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
+  const vaporGeo = new THREE.SphereGeometry(0.16, 5, 4);
+  let vaporAcc = 0;
+  function emitVapor(dt) {
+    const bank = Math.abs(roll);
+    if (bank < 0.55) return;
+    vaporAcc += dt * (bank - 0.55) * 18;
+    while (vaporAcc >= 1) {
+      vaporAcc -= 1;
+      for (const side of [-1.55, 1.55]) {
+        const local = new THREE.Vector3(side, -0.05, 0.3);
+        const world = local.applyMatrix4(player.matrixWorld);
+        const mesh = new THREE.Mesh(vaporGeo, vaporMat);
+        mesh.position.copy(world);
+        scene.add(mesh);
+        particles.push({ mesh, vel: new THREE.Vector3(0, -0.3, 0), life: 0.5, maxLife: 0.5 });
+      }
     }
   }
 
@@ -1311,6 +1373,11 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
   container.appendChild(hud);
   const scoreEl = hud.querySelector('.skyduel-score');
   const healthFillEl = hud.querySelector('.skyduel-health-fill');
+
+  const reticle = document.createElement('div');
+  reticle.className = 'skyduel-reticle';
+  reticle.innerHTML = '<div class="skyduel-reticle-h"></div><div class="skyduel-reticle-v"></div>';
+  container.appendChild(reticle);
 
   const overlay = document.createElement('div');
   overlay.className = 'skyduel-overlay hidden';
@@ -1379,6 +1446,7 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
       player.translateZ(-speed * dt);
       if (player.position.y < -30) { player.position.y = -30; takeDamage(); }
       if (player.position.y > 140) player.position.y = 140;
+      emitVapor(dt);
 
       playerFireTimer -= dt;
       if (playerFireTimer <= 0) {
@@ -1426,6 +1494,7 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
               score++; onScore(score); reportBest(score);
               scoreEl.textContent = String(score);
               sfx.score(Math.min(score, 10));
+              fovPulse = 1;
               hit = true;
               break;
             }
@@ -1456,6 +1525,11 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
     const lookTarget = player.position.clone().add(new THREE.Vector3(0, 0.6, -8).applyQuaternion(player.quaternion));
     camera.lookAt(lookTarget);
 
+    fovPulse = Math.max(0, fovPulse - dt * 3);
+    camera.fov = baseFov + fovPulse * 10;
+    camera.updateProjectionMatrix();
+
+    oceanMat.uniforms.uTime.value += dt;
     renderer.render(scene, camera);
   });
 
@@ -1465,14 +1539,16 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
     joystick.remove();
     boostBtn.remove();
     hud.remove();
+    reticle.remove();
     overlay.remove();
     for (const b of bullets) scene.remove(b.mesh);
     for (const en of enemies) { scene.remove(en.group); disposeObject3D(en.group); }
     for (const p of particles) scene.remove(p.mesh);
     disposeObject3D(player);
     disposeObject3D(clouds);
-    ground.geometry.dispose(); ground.material.dispose();
+    ground.geometry.dispose(); oceanMat.dispose();
     bulletGeo.dispose(); bulletMat.dispose(); enemyBulletMat.dispose(); particleGeo.dispose(); cloudMat.dispose();
+    vaporGeo.dispose(); vaporMat.dispose(); skyTex.dispose();
     renderer.dispose();
     renderer.domElement.remove();
   };

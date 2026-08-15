@@ -369,6 +369,10 @@ function logout() {
 }
 
 function initAccount(onReady) {
+  // task55 (2026-08-14): apply the saved/detected language to every static data-i18n
+  // string in the document before anything else renders, regardless of which path below
+  // this takes (existing session vs. fresh auth modal).
+  if (window.I18N) window.I18N.applyI18n(document);
   // Supabase redirects back here with #...&type=recovery after the user clicks a password-reset email link.
   if (location.hash.includes('type=recovery')) {
     showResetPasswordForm();
@@ -420,6 +424,12 @@ function showAuthModal(onReady) {
   const guestRow = document.getElementById('guest-btn');
   const errorEl = document.getElementById('auth-error');
   modal.classList.remove('hidden');
+
+  // task55: language selector on the very first screen a new/returning visitor sees.
+  const langSlot = document.getElementById('account-modal-lang-slot');
+  if (langSlot && window.I18N && !langSlot.querySelector('select')) {
+    langSlot.appendChild(window.I18N.buildSelector());
+  }
 
   function showError(msg) { errorEl.textContent = msg; errorEl.classList.remove('hidden'); }
   function clearError() { errorEl.classList.add('hidden'); }
@@ -522,6 +532,13 @@ function pickNextGame(weights, lastId) {
 
 // ---------- Feed ----------
 async function initFeed(user) {
+  // task55: best-effort sync of the chosen language to Supabase for logged-in users, so it
+  // follows them to other devices. Guests only ever get localStorage (i18n.js's default).
+  // Wrapped so that if `profiles.preferred_language` doesn't exist yet as a column (schema
+  // migration not applied), this silently no-ops instead of breaking language switching.
+  if (window.I18N && !user.isGuest) {
+    window.I18N.setServerSync((lang) => { sb.from('profiles').update({ preferred_language: lang }).eq('id', user.id).then(() => {}, () => {}); });
+  }
   initAds();
   initIAP(async (product) => {
     if (user.isGuest) return false; // shouldn't be reachable (store UI is hidden for guests) but don't credit a null account if it somehow is
@@ -533,13 +550,20 @@ async function initFeed(user) {
   });
   const feed = document.getElementById('feed');
   const userBar = document.getElementById('user-bar');
-  if (user.isGuest) {
-    userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span>ゲスト <button id="login-cta-btn" class="login-cta">ログイン</button>`;
-    document.getElementById('login-cta-btn').addEventListener('click', () => location.reload());
-  } else {
-    userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span><span class="user-handle">@${escapeHtml(user.handle || user.name)}</span> <span class="coin-badge" id="coin-badge">🪙${user.coins || 0}</span> <button id="switch-account-btn">切替</button>`;
-    document.getElementById('switch-account-btn').addEventListener('click', logout);
+  function renderUserBar() {
+    const t55 = window.I18N ? window.I18N.t : (k) => ({ login_cta: 'ログイン', switch_account_btn: '切替' }[k] || k);
+    if (user.isGuest) {
+      userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span>ゲスト <button id="login-cta-btn" class="login-cta">${escapeHtml(t55('login_cta'))}</button>`;
+      document.getElementById('login-cta-btn').addEventListener('click', () => location.reload());
+    } else {
+      userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span><span class="user-handle">@${escapeHtml(user.handle || user.name)}</span> <span class="coin-badge" id="coin-badge">🪙${user.coins || 0}</span> <button id="switch-account-btn">${escapeHtml(t55('switch_account_btn'))}</button>`;
+      document.getElementById('switch-account-btn').addEventListener('click', logout);
+    }
   }
+  renderUserBar();
+  // task55: keep the header in sync when the user changes language from the profile panel
+  // mid-session, instead of only picking it up on next reload.
+  if (window.I18N) window.I18N.onLangChange(renderUserBar);
   function refreshCoinDisplay() {
     const el = document.getElementById('coin-badge');
     if (el) el.textContent = `🪙${user.coins || 0}`;
@@ -1750,9 +1774,14 @@ async function initFeed(user) {
       <ul class="liked-list">
         ${likedGames.map((g) => `<li><span>${escapeHtml(g.title)}</span><span>#${escapeHtml(g.genre)}</span></li>`).join('') || '<li style="opacity:0.5;">まだありません</li>'}
       </ul>
+      <div class="profile-lang-row" id="profile-lang-slot"><label data-i18n="language_label">言語 / Language</label></div>
       <a class="logout-link" id="profile-legal-link" style="color:#4ea8ff;">利用規約・プライバシーポリシー</a>
       <a class="logout-link" id="profile-logout">ログアウト</a>
     `;
+    if (window.I18N) {
+      window.I18N.applyI18n(body);
+      document.getElementById('profile-lang-slot').appendChild(window.I18N.buildSelector());
+    }
     document.getElementById('profile-legal-link').addEventListener('click', showLegalModal);
     document.getElementById('profile-logout').addEventListener('click', logout);
     const watchAdBtn = document.getElementById('watch-ad-btn');
