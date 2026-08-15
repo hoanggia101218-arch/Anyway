@@ -1145,48 +1145,97 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
 // cylinders), matching how every other character/prop in this codebase is built — no new
 // external model/asset files.
 function buildJet(color, scale = 1) {
+  // Second pass (2026-08-15, after user feedback that the first version looked low-quality):
+  // more hull segments, swept trapezoidal wings (two angled panels per side instead of one flat
+  // rectangle), a canopy with actual frame ribs, intakes, wingtip nav lights, a ventral fin, and
+  // an afterburner ring -- still 100% procedural primitives, no external model files, just a lot
+  // more of them arranged with more attention to real jet proportions.
   const g = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.35 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.6 });
-  const glassMat = new THREE.MeshStandardMaterial({ color: 0x8fd8ff, roughness: 0.15, metalness: 0.5, emissive: 0x1a3a4a, emissiveIntensity: 0.3 });
+  const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.55 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x14141a, roughness: 0.55, metalness: 0.4 });
+  const panelMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(color).multiplyScalar(0.75), roughness: 0.4, metalness: 0.5 });
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0xbfe8ff, roughness: 0.08, metalness: 0.7, emissive: 0x2a5a7a, emissiveIntensity: 0.35 });
 
-  const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.42, 2.6, 8), bodyMat);
-  fuselage.rotation.x = Math.PI / 2;
-  g.add(fuselage);
+  // Fuselage built from two tapered cylinder segments (front narrows to the nose, rear narrows
+  // to the tailpipe) instead of one uniform taper -- reads as a real aircraft cross-section
+  // rather than a simple cone-to-cone blend.
+  const front = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.3, 1.5, 10), bodyMat);
+  front.rotation.x = Math.PI / 2;
+  front.position.z = -0.65;
+  g.add(front);
+  const rear = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.22, 1.3, 10), panelMat);
+  rear.rotation.x = Math.PI / 2;
+  rear.position.z = 0.75;
+  g.add(rear);
 
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.9, 8), darkMat);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.3, 0.7, 10), darkMat);
   nose.rotation.x = -Math.PI / 2;
   nose.position.z = -1.75;
   g.add(nose);
 
-  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.26, 8, 6), glassMat);
-  cockpit.position.set(0, 0.28, -0.5);
-  cockpit.scale.set(1, 0.8, 1.4);
+  // Canopy: glass bubble plus a couple of thin frame ribs across it for a "real cockpit" read.
+  const cockpit = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), glassMat);
+  cockpit.position.set(0, 0.32, -0.55);
+  cockpit.scale.set(0.95, 0.85, 1.5);
   g.add(cockpit);
+  for (const dz of [-0.9, -0.55, -0.2]) {
+    const rib = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.06, 0.06), darkMat);
+    rib.position.set(0, 0.5, dz);
+    g.add(rib);
+  }
 
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.08, 1.0), bodyMat);
-  wing.position.set(0, -0.05, 0.1);
-  g.add(wing);
+  // Intakes: small boxes flanking the front fuselage.
+  for (const side of [-1, 1]) {
+    const intake = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.55), darkMat);
+    intake.position.set(side * 0.42, -0.08, -0.35);
+    g.add(intake);
+  }
 
-  const tailWing = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.06, 0.55), bodyMat);
-  tailWing.position.set(0, 0.05, 1.15);
+  // Swept wings: a wide root panel plus a narrower, further-back tip panel per side, so the
+  // silhouette tapers and sweeps instead of reading as one flat rectangle.
+  for (const side of [-1, 1]) {
+    const root = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.07, 1.15), bodyMat);
+    root.position.set(side * 0.85, -0.05, 0.25);
+    root.rotation.z = side * -0.05;
+    g.add(root);
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.06, 0.65), panelMat);
+    tip.position.set(side * 1.75, -0.06, 0.62);
+    tip.rotation.y = side * 0.32;
+    tip.rotation.z = side * -0.05;
+    g.add(tip);
+    const navLight = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6),
+      new THREE.MeshStandardMaterial({ color: side < 0 ? 0xff3b3b : 0x3bff6a, emissive: side < 0 ? 0xff3b3b : 0x3bff6a, emissiveIntensity: 1.2 }));
+    navLight.position.set(side * 2.3, -0.06, 0.85);
+    g.add(navLight);
+  }
+
+  const tailWing = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.06, 0.55), bodyMat);
+  tailWing.position.set(0, 0.05, 1.2);
   g.add(tailWing);
 
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.75, 0.85), darkMat);
-  fin.position.set(0, 0.42, 1.15);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, 0.85), darkMat);
+  fin.position.set(0, 0.45, 1.2);
+  fin.rotation.x = -0.12;
   g.add(fin);
+  const ventralFin = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.32, 0.5), darkMat);
+  ventralFin.position.set(0, -0.32, 1.15);
+  g.add(ventralFin);
 
-  const engineGeo = new THREE.CylinderGeometry(0.16, 0.2, 0.5, 6);
-  const engineMat = new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.5, metalness: 0.6, emissive: 0xff6a2b, emissiveIntensity: 0.4 });
+  const engineGeo = new THREE.CylinderGeometry(0.17, 0.21, 0.5, 8);
+  const engineMat = new THREE.MeshStandardMaterial({ color: 0x2a2a30, roughness: 0.4, metalness: 0.7 });
+  const afterburnerMat = new THREE.MeshStandardMaterial({ color: 0xff6a2b, emissive: 0xff6a2b, emissiveIntensity: 0.9 });
   for (const side of [-1, 1]) {
     const engine = new THREE.Mesh(engineGeo, engineMat);
     engine.rotation.x = Math.PI / 2;
-    engine.position.set(side * 0.9, -0.05, 1.2);
+    engine.position.set(side * 0.32, -0.06, 1.35);
     g.add(engine);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.03, 6, 10), afterburnerMat);
+    ring.position.set(side * 0.32, -0.06, 1.6);
+    g.add(ring);
   }
 
   g.scale.setScalar(scale);
-  g.userData.hitRadius = 1.3 * scale;
+  g.userData.hitRadius = 1.5 * scale;
   return g;
 }
 
@@ -1229,11 +1278,16 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
   const camera = new THREE.PerspectiveCamera(62, width / height, 0.1, 1000);
   const baseFov = 62;
 
-  const hemi = new THREE.HemisphereLight(0xffe8c8, 0x2a4a6a, 1.0);
+  const hemi = new THREE.HemisphereLight(0xffe8c8, 0x2a4a6a, 0.75);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xffddb0, 1.5);
+  const sun = new THREE.DirectionalLight(0xfff0d0, 2.4);
   sun.position.set(40, 60, -30);
   scene.add(sun);
+  // Cool blue fill from the opposite side so the shadowed side of the jet doesn't go flat black
+  // -- cheap two-light setup instead of true GI, but reads much less "flat" than hemi+sun alone.
+  const fill = new THREE.DirectionalLight(0x6fa8ff, 0.6);
+  fill.position.set(-30, 20, 40);
+  scene.add(fill);
 
   // Animated ocean via a vertex-displacement ShaderMaterial (two overlapping sine waves,
   // sampled per-vertex) instead of a flat ground plane or a texture asset -- same "procedural
@@ -1367,12 +1421,20 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
   boostBtn.addEventListener('pointercancel', () => { boosting = false; });
   container.appendChild(boostBtn);
 
+  const missileAmmoEl_ref = { el: null };
+  const missileBtn = document.createElement('button');
+  missileBtn.className = 'skyduel-missile-btn';
+  missileBtn.textContent = '🎯';
+  missileBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); fireMissile(); });
+  container.appendChild(missileBtn);
+
   const hud = document.createElement('div');
   hud.className = 'skyduel-hud';
-  hud.innerHTML = `<div class="skyduel-score">0</div><div class="skyduel-health"><div class="skyduel-health-fill"></div></div>`;
+  hud.innerHTML = `<div class="skyduel-score">0</div><div class="skyduel-health"><div class="skyduel-health-fill"></div></div><div class="skyduel-ammo">🎯 4</div>`;
   container.appendChild(hud);
   const scoreEl = hud.querySelector('.skyduel-score');
   const healthFillEl = hud.querySelector('.skyduel-health-fill');
+  missileAmmoEl_ref.el = hud.querySelector('.skyduel-ammo');
 
   const reticle = document.createElement('div');
   reticle.className = 'skyduel-reticle';
@@ -1423,6 +1485,46 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
     bullets.push({ mesh, vel: dir.multiplyScalar(owner === 'player' ? 110 : 60), owner, life: 3 });
   }
 
+  // Missile: a second, stronger weapon alongside the auto-firing gun -- limited ammo (slowly
+  // regenerates), only launches while the reticle has a lock, and homes in on its target by
+  // steering its velocity toward the target each frame instead of flying a straight line.
+  const missileGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 6);
+  const missileMat = new THREE.MeshStandardMaterial({ color: 0xdedede, roughness: 0.4, metalness: 0.5 });
+  let missiles = []; // { mesh, vel, target, life }
+  let missileAmmo = 4, missileRegenT = 0;
+  let lockedEnemy = null;
+
+  function findLockTarget() {
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+    let best = null, bestDot = 0.94; // ~20 degree cone
+    for (const en of enemies) {
+      const toEnemy = en.group.position.clone().sub(player.position);
+      const dist = toEnemy.length();
+      if (dist > 140 || dist < 0.01) continue;
+      toEnemy.normalize();
+      const dot = fwd.dot(toEnemy);
+      if (dot > bestDot) { bestDot = dot; best = en; }
+    }
+    return best;
+  }
+
+  function fireMissile() {
+    if (missileAmmo <= 0 || !lockedEnemy || dead) { sfx.bad(); return; }
+    missileAmmo--;
+    updateMissileAmmoUI();
+    const mesh = new THREE.Mesh(missileGeo, missileMat);
+    mesh.position.copy(player.position).add(new THREE.Vector3(0.9, -0.1, -1).applyQuaternion(player.quaternion));
+    mesh.quaternion.copy(player.quaternion);
+    scene.add(mesh);
+    const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+    missiles.push({ mesh, vel: dir.multiplyScalar(50), target: lockedEnemy, life: 4 });
+    sfx.note(880);
+  }
+
+  function updateMissileAmmoUI() {
+    if (missileAmmoEl_ref.el) missileAmmoEl_ref.el.textContent = '🎯 ' + missileAmmo;
+  }
+
   let playerFireTimer = 0;
 
   function onTap() {
@@ -1462,11 +1564,24 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
         spawnEnemy();
       }
 
+      lockedEnemy = findLockTarget();
+      reticle.classList.toggle('locked', !!lockedEnemy);
+
+      if (missileAmmo < 4) {
+        missileRegenT -= dt;
+        if (missileRegenT <= 0) { missileRegenT = 6; missileAmmo++; updateMissileAmmoUI(); }
+      }
+
       for (let i = enemies.length - 1; i >= 0; i--) {
         const en = enemies[i];
         const toPlayer = player.position.clone().sub(en.group.position);
         const dist = toPlayer.length();
-        if (dist > 220) { scene.remove(en.group); disposeObject3D(en.group); enemies.splice(i, 1); continue; }
+        if (dist > 220) {
+          scene.remove(en.group); disposeObject3D(en.group); enemies.splice(i, 1);
+          for (const m of missiles) if (m.target === en) m.target = null;
+          if (lockedEnemy === en) lockedEnemy = null;
+          continue;
+        }
         en.group.lookAt(player.position);
         en.group.translateZ(-16 * dt);
         en.fireT -= dt;
@@ -1477,7 +1592,46 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
         if (dist < 2.6) {
           explode(en.group.position, 0xff6a2b);
           scene.remove(en.group); disposeObject3D(en.group); enemies.splice(i, 1);
+          for (const m of missiles) if (m.target === en) m.target = null;
+          if (lockedEnemy === en) lockedEnemy = null;
           takeDamage();
+        }
+      }
+
+      for (let i = missiles.length - 1; i >= 0; i--) {
+        const m = missiles[i];
+        if (m.target && enemies.includes(m.target)) {
+          const toTarget = m.target.group.position.clone().sub(m.mesh.position).normalize();
+          m.vel.lerp(toTarget.multiplyScalar(60), Math.min(1, dt * 2.5));
+        }
+        m.mesh.position.addScaledVector(m.vel, dt);
+        m.mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), m.vel.clone().normalize());
+        m.life -= dt;
+        if (Math.random() < 0.6) {
+          const smoke = new THREE.Mesh(vaporGeo, vaporMat);
+          smoke.position.copy(m.mesh.position);
+          scene.add(smoke);
+          particles.push({ mesh: smoke, vel: new THREE.Vector3(0, 0.2, 0), life: 0.4, maxLife: 0.4 });
+        }
+        let hit = false;
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          if (m.mesh.position.distanceTo(enemies[j].group.position) < 2.0) {
+            const killed = enemies[j].group;
+            explode(killed.position, 0xffb020);
+            scene.remove(killed); disposeObject3D(killed); enemies.splice(j, 1);
+            for (const mm of missiles) if (mm.target && mm.target.group === killed) mm.target = null;
+            if (lockedEnemy && lockedEnemy.group === killed) lockedEnemy = null;
+            score += 3; onScore(score); reportBest(score);
+            scoreEl.textContent = String(score);
+            sfx.win();
+            fovPulse = 1.5;
+            hit = true;
+            break;
+          }
+        }
+        if (hit || m.life <= 0) {
+          scene.remove(m.mesh);
+          missiles.splice(i, 1);
         }
       }
 
@@ -1489,8 +1643,11 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
         if (b.owner === 'player') {
           for (let j = enemies.length - 1; j >= 0; j--) {
             if (b.mesh.position.distanceTo(enemies[j].group.position) < 1.6) {
-              explode(enemies[j].group.position, 0xffd23f);
-              scene.remove(enemies[j].group); disposeObject3D(enemies[j].group); enemies.splice(j, 1);
+              const killed = enemies[j].group;
+              explode(killed.position, 0xffd23f);
+              scene.remove(killed); disposeObject3D(killed); enemies.splice(j, 1);
+              for (const m of missiles) if (m.target && m.target.group === killed) m.target = null;
+              if (lockedEnemy && lockedEnemy.group === killed) lockedEnemy = null;
               score++; onScore(score); reportBest(score);
               scoreEl.textContent = String(score);
               sfx.score(Math.min(score, 10));
@@ -1538,10 +1695,12 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
     container.removeEventListener('pointerdown', onTap);
     joystick.remove();
     boostBtn.remove();
+    missileBtn.remove();
     hud.remove();
     reticle.remove();
     overlay.remove();
     for (const b of bullets) scene.remove(b.mesh);
+    for (const m of missiles) scene.remove(m.mesh);
     for (const en of enemies) { scene.remove(en.group); disposeObject3D(en.group); }
     for (const p of particles) scene.remove(p.mesh);
     disposeObject3D(player);
@@ -1549,6 +1708,7 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
     ground.geometry.dispose(); oceanMat.dispose();
     bulletGeo.dispose(); bulletMat.dispose(); enemyBulletMat.dispose(); particleGeo.dispose(); cloudMat.dispose();
     vaporGeo.dispose(); vaporMat.dispose(); skyTex.dispose();
+    missileGeo.dispose(); missileMat.dispose();
     renderer.dispose();
     renderer.domElement.remove();
   };
@@ -1580,3 +1740,25 @@ const GAME_DEFS = [
 ];
 
 window.GAME_DEFS = GAME_DEFS;
+
+// task55 Phase2 (2026-08-15, Toshiba): translate GAME_DEFS' title/genre in place whenever the
+// language changes, instead of touching every one of the dozen+ app.js call sites that read
+// def.title/def.genre directly. Original Japanese is kept on _jaTitle/_jaGenre so switching
+// back to 'ja' (or any language missing a specific game's translation) always has a safe
+// fallback. This file loads before i18n.js (see index.html script order), so `window.I18N`
+// isn't available yet at top-level here -- app.js calls window.applyGameDefsI18n() once after
+// i18n.js is loaded, and registers it with I18N.onLangChange for live switching.
+const GENRE_KEY_BY_JA = { 'アクション': 'action', 'タイミング': 'timing', 'パズル': 'puzzle', '記憶': 'memory' };
+GAME_DEFS.forEach((def) => { def._jaTitle = def.title; def._jaGenre = def.genre; });
+function applyGameDefsI18n() {
+  if (!window.I18N) return;
+  const t = window.I18N.t;
+  GAME_DEFS.forEach((def) => {
+    def.title = t('game_title_' + def.id);
+    if (def.title === 'game_title_' + def.id) def.title = def._jaTitle; // no translation for this game yet -> ja fallback
+    const genreKey = GENRE_KEY_BY_JA[def._jaGenre];
+    def.genre = genreKey ? t('genre_' + genreKey) : def._jaGenre;
+    if (def.genre === 'genre_' + genreKey) def.genre = def._jaGenre;
+  });
+}
+window.applyGameDefsI18n = applyGameDefsI18n;
