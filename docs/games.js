@@ -2,6 +2,18 @@
 // Every mount(container, {onScore, onHint}) returns a cleanup() function.
 // No network calls, no eval, no external assets — pure canvas/DOM + JS.
 
+// task55 Phase3 (2026-08-15, Toshiba): translate a per-game hint/UI string if i18n.js has it
+// for the current language, otherwise fall back to the Japanese string that was always here.
+// Each mount() runs fresh per card-activation, so unlike GAME_DEFS' title/genre (which need
+// live re-application via I18N.onLangChange, see games.js bottom) these hints just need to
+// read whatever the current language is at the moment a game actually mounts -- no listener
+// needed, next mount naturally picks up any language change made in between.
+function gt(key, fallback) {
+  if (!window.I18N) return fallback;
+  const v = window.I18N.t(key);
+  return v === key ? fallback : v;
+}
+
 function makeCanvas(container) {
   const c = document.createElement('canvas');
   c.width = container.clientWidth;
@@ -197,7 +209,7 @@ function mountDodge(container, { onScore, onHint }, config = {}) {
   const blockSpeed = config.blockSpeed ?? 180;
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
-  onHint('画面の左右をタップ、またはA/Dキーで避けろ！');
+  onHint(gt('hint_dodge', '画面の左右をタップ、またはA/Dキーで避けろ！'));
   let px = canvas.width / 2, pw = 44, ph = 44, speed = 320;
   let blocks = [], t = 0, score = 0, dead = false, dir = 0, spawnEvery = 0.9, spawnT = 0, burst = [];
   const reportBest = makeBestTracker('dodge', onHint);
@@ -264,7 +276,7 @@ function mountDodge(container, { onScore, onHint }, config = {}) {
     drawBurst(ctx, burst, dt);
     if (dead) {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('やられた…もう一回', canvas.width / 2, canvas.height / 2);
+      ctx.fillText(gt('memory_fail_retry', 'やられた…もう一回'), canvas.width / 2, canvas.height / 2);
     }
   });
 
@@ -280,7 +292,7 @@ function mountDodge(container, { onScore, onHint }, config = {}) {
 
 // ---------- 3. Memory (記憶) ----------
 function mountMemory(container, { onScore, onHint }, config = {}) {
-  onHint('2枚めくってペアを揃えよう');
+  onHint(gt('hint_memory', '2枚めくってペアを揃えよう'));
   const wrap = document.createElement('div');
   wrap.className = 'grid-dom';
   wrap.style.gridTemplateColumns = 'repeat(4, 1fr)';
@@ -348,7 +360,7 @@ function mountMemory(container, { onScore, onHint }, config = {}) {
 // ---------- 6. Flap (アクション) ----------
 function mountFlap(container, { onScore, onHint }, config = {}) {
   const gravity = config.gravity ?? 900;
-  onHint('タップで羽ばたいてパイプを避けよう');
+  onHint(gt('hint_flap', 'タップで羽ばたいてパイプを避けよう'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
   let by, bv, pipes, score, dead, t, particles;
@@ -405,7 +417,7 @@ function mountFlap(container, { onScore, onHint }, config = {}) {
     drawBurst(ctx, particles, dt);
     if (dead) {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('タップでリスタート', canvas.width / 2, canvas.height / 2);
+      ctx.fillText(gt('restart_hint', 'タップでリスタート'), canvas.width / 2, canvas.height / 2);
     }
   });
 
@@ -414,7 +426,7 @@ function mountFlap(container, { onScore, onHint }, config = {}) {
 
 // ---------- 10. Slide 2048-lite (パズル) ----------
 function mountSlide(container, { onScore, onHint }) {
-  onHint('下のボタンで同じ数字を合体させよう(上下スワイプは次のゲームへ移動します)');
+  onHint(gt('hint_slide', '下のボタンで同じ数字を合体させよう(上下スワイプは次のゲームへ移動します)'));
   const wrap = document.createElement('div');
   wrap.className = 'grid-dom';
   wrap.style.gridTemplateColumns = 'repeat(4, 1fr)';
@@ -529,7 +541,7 @@ function mountSlide(container, { onScore, onHint }) {
 // ---------- 11. Stack Tower (タイミング) ----------
 function mountStack(container, { onScore, onHint }, config = {}) {
   const speedStart = config.speedStart ?? 140;
-  onHint('タップでブロックを重ねよう。ぴったり合わせるほど高得点！');
+  onHint(gt('hint_stack', 'タップでブロックを重ねよう。ぴったり合わせるほど高得点！'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
   const layerH = 30;
@@ -604,7 +616,7 @@ function mountStack(container, { onScore, onHint }, config = {}) {
     drawBurst(ctx, particles, dt);
     if (dead) {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('タップでリスタート', canvas.width / 2, canvas.height / 2);
+      ctx.fillText(gt('restart_hint', 'タップでリスタート'), canvas.width / 2, canvas.height / 2);
     }
   });
 
@@ -614,7 +626,7 @@ function mountStack(container, { onScore, onHint }, config = {}) {
 // ---------- 12. Aim Timing (タイミング) ----------
 function mountAim(container, { onScore, onHint }, config = {}) {
   const startSpeed = config.startSpeed ?? 220;
-  onHint('マーカーが緑の枠に来た瞬間にタップ！外すとライフが減るよ');
+  onHint(gt('hint_aim', 'マーカーが緑の枠に来た瞬間にタップ！外すとライフが減るよ'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
   const reportBest = makeBestTracker('aim', onHint);
@@ -673,7 +685,7 @@ function mountAim(container, { onScore, onHint }, config = {}) {
       ctx.fillRect(barX + pos - 2, barY - 14, 4, 36);
     }
     ctx.fillStyle = '#fff'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(dead ? 'タップでリスタート' : 'タップでストップ！', canvas.width / 2, barY - 40);
+    ctx.fillText(dead ? gt('restart_hint', 'タップでリスタート') : 'タップでストップ！', canvas.width / 2, barY - 40);
     for (let i = 0; i < maxLives; i++) {
       ctx.fillStyle = i < lives ? '#ff4b4b' : 'rgba(255,255,255,0.2)';
       ctx.beginPath(); ctx.arc(barX + 10 + i * 22, barY + 40, 7, 0, Math.PI * 2); ctx.fill();
@@ -699,7 +711,7 @@ const MERGE_FRUITS = [
   { emoji: '🍉', color: '#31d158', rf: 0.19 },
 ];
 function mountMerge(container, { onScore, onHint }, config = {}) {
-  onHint('ドラッグで位置を決めて指を離すと落下。同じ果物同士をくっつけて合体させよう！');
+  onHint(gt('hint_merge', 'ドラッグで位置を決めて指を離すと落下。同じ果物同士をくっつけて合体させよう！'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
   const reportBest = makeBestTracker('merge', onHint);
@@ -878,9 +890,9 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
     if (dead) {
       ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif';
-      ctx.fillText('ゲームオーバー', canvas.width / 2, canvas.height / 2 - 16);
+      ctx.fillText(gt('game_over', 'ゲームオーバー'), canvas.width / 2, canvas.height / 2 - 16);
       ctx.font = 'bold 16px sans-serif';
-      ctx.fillText('タップでリスタート', canvas.width / 2, canvas.height / 2 + 14);
+      ctx.fillText(gt('restart_hint', 'タップでリスタート'), canvas.width / 2, canvas.height / 2 + 14);
     }
   });
 
@@ -942,7 +954,7 @@ function mountMyMaze(container, { onScore, onHint }, config = {}) {
   let px = startCell.x, py = startCell.y, lives = 3, score = 0, dead = false, shakeT = 0, burst = [];
   const combo = makeCombo();
   const reportBest = makeBestTracker('mymaze', onHint);
-  onHint('矢印キー/下のパッドでゴール🏁を目指せ！壁は通れない、危険マスでライフが減る');
+  onHint(gt('hint_mymaze', '矢印キー/下のパッドでゴール🏁を目指せ！壁は通れない、危険マスでライフが減る'));
 
   function isWall(x, y) { return x < 0 || y < 0 || x >= cols || y >= rows || cells[mazeIdx(cols, x, y)] === MAZE_CELL.WALL; }
   function isHazard(x, y) { return x >= 0 && y >= 0 && x < cols && y < rows && cells[mazeIdx(cols, x, y)] === MAZE_CELL.HAZARD; }
@@ -958,7 +970,7 @@ function mountMyMaze(container, { onScore, onHint }, config = {}) {
       lives -= 1;
       combo.miss();
       spawnBurst(burst, offX + px * cell + cell / 2, offY + py * cell + cell / 2, '#ff4b4b', 14);
-      if (lives <= 0) { dead = true; sfx.gameover(); onHint('タップでリスタート'); }
+      if (lives <= 0) { dead = true; sfx.gameover(); onHint(gt('restart_hint', gt('restart_hint', 'タップでリスタート'))); }
       else respawn();
       return;
     }
@@ -1010,7 +1022,7 @@ function mountMyMaze(container, { onScore, onHint }, config = {}) {
     ctx.fillText('❤️'.repeat(Math.max(0, lives)), 8, 20);
     if (dead) {
       ctx.textAlign = 'center'; ctx.font = 'bold 16px sans-serif';
-      ctx.fillText('タップでリスタート', canvas.width / 2, canvas.height / 2);
+      ctx.fillText(gt('restart_hint', 'タップでリスタート'), canvas.width / 2, canvas.height / 2);
     }
   });
 
@@ -1030,7 +1042,7 @@ function mountMyMaze(container, { onScore, onHint }, config = {}) {
 // of any third-party game's code or art, just the same "cover the board without crossing
 // yourself" puzzle idea classic to grid-snake games.
 function mountFillItAll(container, { onScore, onHint }, config = {}) {
-  onHint('下のボタン(WASD/矢印キーもOK)で1マスずつ進み、部屋のマスを全部ぬろう。自分の跡に触れたら終了！');
+  onHint(gt('hint_fillitall', '下のボタン(WASD/矢印キーもOK)で1マスずつ進み、部屋のマスを全部ぬろう。自分の跡に触れたら終了！'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
   const cell = 26;
@@ -1121,7 +1133,7 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
     ctx.fillText(`Lv.${level}  ${filled.size}/${levelCells}`, 8, 18);
     if (dead) {
       ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('タップ/ボタンでリスタート', canvas.width / 2, canvas.height / 2);
+      ctx.fillText(gt('restart_hint_button', 'タップ/ボタンでリスタート'), canvas.width / 2, canvas.height / 2);
     }
   });
 
@@ -1246,7 +1258,7 @@ function disposeObject3D(obj) {
 }
 
 function mountSkyDuel(container, { onScore, onHint }, config = {}) {
-  onHint('ジョイスティックで操縦、自動で発射！敵を撃墜してスコアを稼ごう。右下ボタンでブースト');
+  onHint(gt('hint_skyduel', 'ジョイスティックで操縦、自動で発射！敵を撃墜してスコアを稼ごう。右下ボタンでブースト'));
   container.style.position = 'relative';
   const width = container.clientWidth, height = container.clientHeight;
 
@@ -1443,7 +1455,7 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
 
   const overlay = document.createElement('div');
   overlay.className = 'skyduel-overlay hidden';
-  overlay.textContent = 'タップでリスタート';
+  overlay.textContent = gt('restart_hint', 'タップでリスタート');
   container.appendChild(overlay);
 
   function resetRun() {
@@ -1737,6 +1749,14 @@ const GAME_DEFS = [
   { id: 'fillitall', title: 'ぜんぶぬろう！', genre: 'パズル', mount: mountFillItAll },
   // Original 3D air-combat game (2026-08-14 user request). See mountSkyDuel above.
   { id: 'skyduel', title: 'スカイデュエル', genre: 'アクション', mount: mountSkyDuel },
+  // task63: realtime N-player battle royale. Lives in its own file (royale.js, loaded after
+  // this one) since it needs its own Supabase realtime client + a lot of sync/combat code that
+  // doesn't belong in this file's solo-game collection. Wrapped in an arrow function (rather
+  // than `mount: window.RoyaleGame.mount` directly) so the window.RoyaleGame lookup happens at
+  // mount-CALL time, not at this array's construction time -- a card only actually mounts long
+  // after every <script> tag has loaded, so this works regardless of the two files' load order.
+  { id: 'royale', title: 'エレメント・ロワイヤル', genre: 'アクション',
+    mount: (container, cbs, config) => window.RoyaleGame.mount(container, cbs, config) },
 ];
 
 window.GAME_DEFS = GAME_DEFS;

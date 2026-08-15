@@ -40,6 +40,17 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+// Shown in the profile screen so the account owner can confirm which account they're in --
+// but a full plaintext email is easy to leak by accident (screenshots, screen-shares, demo
+// recordings shown to third parties for review). Masking the local part keeps it recognizable
+// to the owner while reducing what a passerby/viewer of a screenshot can read off directly.
+function maskEmail(email) {
+  if (typeof email !== 'string' || !email.includes('@')) return email || '';
+  const [local, domain] = email.split('@');
+  if (local.length <= 2) return `${local[0] || ''}●@${domain}`;
+  return `${local.slice(0, 2)}${'●'.repeat(Math.min(local.length - 2, 6))}@${domain}`;
+}
+
 function getWeights(user) { try { return JSON.parse(localStorage.getItem(WEIGHTS_KEY + user.id)) || {}; } catch { return {}; } }
 function setWeights(user, w) { localStorage.setItem(WEIGHTS_KEY + user.id, JSON.stringify(w)); }
 
@@ -373,6 +384,13 @@ function initAccount(onReady) {
   // string in the document before anything else renders, regardless of which path below
   // this takes (existing session vs. fresh auth modal).
   if (window.I18N) window.I18N.applyI18n(document);
+  // task55 Phase2 (2026-08-15): GAME_DEFS' title/genre (feed cards, search, profile lists,
+  // create-post flow, share text -- every app.js call site that reads def.title/def.genre)
+  // get translated in place here, then kept in sync on every later language change.
+  if (window.I18N && window.applyGameDefsI18n) {
+    window.applyGameDefsI18n();
+    window.I18N.onLangChange(window.applyGameDefsI18n);
+  }
   // Supabase redirects back here with #...&type=recovery after the user clicks a password-reset email link.
   if (location.hash.includes('type=recovery')) {
     showResetPasswordForm();
@@ -1714,22 +1732,23 @@ async function initFeed(user) {
     body.innerHTML = '<p class="panel-note small">読み込み中...</p>';
     if (!user.isGuest) await fetchMyClub();
     const likedGames = [...liked].map((id) => GAME_DEFS.find((g) => g.id === id)).filter(Boolean);
+    const t55p = window.I18N ? window.I18N.t : (k) => ({ profile_no_club: '所属中のクラブなし' }[k] || k);
     body.innerHTML = `
       <div class="profile-id-line">${user.handle ? `@${escapeHtml(user.handle)}` : '(ユーザーID未設定)'}</div>
       <div class="profile-top-row">
         <span class="avatar-lg" style="background:${user.color};border-radius:50%;"></span>
         <button class="profile-club" id="profile-club-badge">
           <span class="club-badge">🛡️</span>
-          <span>${myClub ? escapeHtml(myClub.name) : '所属中のクラブなし'}</span>
+          <span>${myClub ? escapeHtml(myClub.name) : t55p('profile_no_club')}</span>
         </button>
       </div>
       <div class="profile-stat-row">
-        <div class="stat-block"><div class="stat-num">${followerCount}</div><div class="stat-label">フォロワーの数</div></div>
-        <div class="stat-block"><div class="stat-num">${followingCount}</div><div class="stat-label">フォロー中の数</div></div>
-        <div class="stat-block"><div class="stat-icon">🪙</div><div class="stat-num">${user.coins || 0}</div><div class="stat-label">コイン</div></div>
+        <div class="stat-block"><div class="stat-num">${followerCount}</div><div class="stat-label" data-i18n="profile_followers">フォロワーの数</div></div>
+        <div class="stat-block"><div class="stat-num">${followingCount}</div><div class="stat-label" data-i18n="profile_following">フォロー中の数</div></div>
+        <div class="stat-block"><div class="stat-icon">🪙</div><div class="stat-num">${user.coins || 0}</div><div class="stat-label" data-i18n="profile_coins">コイン</div></div>
       </div>
       <button class="profile-club" id="open-elements-btn" style="width:100%;justify-content:center;margin-bottom:12px;">
-        <span class="club-badge">🔮</span><span>精霊図鑑を見る(全10体・3D)</span>
+        <span class="club-badge">🔮</span><span data-i18n="profile_view_elements">精霊図鑑を見る(全10体・3D)</span>
       </button>
       ${(!user.isGuest && !user.isMinor && isNativeApp()) ? '<button class="post-btn" id="watch-ad-btn" style="margin-bottom:16px;">📺 広告を見てコイン+20</button>' : ''}
       ${(!user.isGuest && !user.isMinor && isNativeApp()) ? `
@@ -1750,10 +1769,10 @@ async function initFeed(user) {
         <button class="icon-btn" id="edit-username-btn" title="ユーザー名を編集">✏️</button>
       </div>
       <div class="profile-stat-row">
-        <div class="stat-block"><div class="stat-icon">🎮</div><div class="stat-num">${myPosts.length}</div><div class="stat-label">投稿の数</div></div>
-        <div class="stat-block"><div class="stat-icon">🔁</div><div class="stat-num">${reposted.size}</div><div class="stat-label">再投稿の数</div></div>
+        <div class="stat-block"><div class="stat-icon">🎮</div><div class="stat-num">${myPosts.length}</div><div class="stat-label" data-i18n="profile_posts">投稿の数</div></div>
+        <div class="stat-block"><div class="stat-icon">🔁</div><div class="stat-num">${reposted.size}</div><div class="stat-label" data-i18n="profile_reposts">再投稿の数</div></div>
       </div>
-      <div style="font-size:12px;opacity:0.5;text-align:center;margin-bottom:20px;">${escapeHtml(user.email)}</div>
+      <div style="font-size:12px;opacity:0.5;text-align:center;margin-bottom:20px;">${escapeHtml(maskEmail(user.email))}</div>
       ${user.handle ? '' : `
         <div class="param-row">
           <label>ユーザーIDを設定する(検索・フォロー・DMに使われます)</label>
@@ -1775,8 +1794,8 @@ async function initFeed(user) {
         ${likedGames.map((g) => `<li><span>${escapeHtml(g.title)}</span><span>#${escapeHtml(g.genre)}</span></li>`).join('') || '<li style="opacity:0.5;">まだありません</li>'}
       </ul>
       <div class="profile-lang-row" id="profile-lang-slot"><label data-i18n="language_label">言語 / Language</label></div>
-      <a class="logout-link" id="profile-legal-link" style="color:#4ea8ff;">利用規約・プライバシーポリシー</a>
-      <a class="logout-link" id="profile-logout">ログアウト</a>
+      <a class="logout-link" id="profile-legal-link" style="color:#4ea8ff;" data-i18n="legal_link">利用規約・プライバシーポリシー</a>
+      <a class="logout-link" id="profile-logout" data-i18n="profile_logout">ログアウト</a>
     `;
     if (window.I18N) {
       window.I18N.applyI18n(body);

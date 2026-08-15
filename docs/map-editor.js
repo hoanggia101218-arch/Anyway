@@ -422,7 +422,24 @@ function buildGround(scene, { photoUrl, mapColor }) {
             if (Math.hypot(wx, wz) < 1.3) continue; // spawn clearing
             const sample = heightAtUV(u, v);
             if (sample.water) continue;
-            const inst = Math.random() < 0.72 ? buildTree() : buildRock();
+            // Bug (found 2026-08-15): this used to place a tree or rock at EVERY non-water grid
+            // point on EVERY map, with no regard for what the map actually is -- season1_map3
+            // (a sci-fi city with paved black roads, no nature anywhere) was getting pine trees
+            // scattered across it just like the grassland village. Read the ground photo's own
+            // sampled color (already computed for the heightmap, see sampleColor above) and only
+            // place trees on grass-green ground; dark/paved (urban) ground gets no decorations
+            // at all; anything else (sand, stone, etc.) gets rocks only, never trees.
+            const [dr, dg, db] = sampleColor(u, v);
+            const dAvg = (dr + dg + db) / 3;
+            // avg>25 (not >50): map3's own park ground color (mat_park, (0.08,0.30,0.16) in
+            // Blender = ~(20,77,41) in 0-255, avg~46) is legitimately grass-green by the ratio
+            // check but darker than a >50 floor would allow -- that floor was miscalibrated
+            // against this project's actual palette and would have suppressed trees in the one
+            // place (the park) they're supposed to be, the opposite of the intended fix.
+            const isGrassy = dg > dr * 1.1 && dg > db * 1.1 && dAvg > 25;
+            const isPaved = dAvg < 45;
+            if (isPaved) continue;
+            const inst = isGrassy ? (Math.random() < 0.72 ? buildTree() : buildRock()) : buildRock();
             // Decorations are added directly to `scene` (siblings of the ground mesh, not
             // its children), so they need the ground's WORLD-space surface height here, not
             // the local geometry-space one. mesh.position.y (-GROUND_HEIGHT/2) already
