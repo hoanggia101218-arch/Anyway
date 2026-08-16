@@ -347,7 +347,14 @@ function legalMarkdownToHtml(md) {
 function showLegalModal() {
   const modal = document.getElementById('legal-modal');
   const content = document.getElementById('legal-content');
-  content.innerHTML = legalMarkdownToHtml(TERMS_OF_SERVICE_MD) + '<hr class="legal-divider">' + legalMarkdownToHtml(PRIVACY_POLICY_MD);
+  // task55 Phase4 (2026-08-15): prefer the translated text in legal_i18n.js for the current
+  // language; fall back to the Japanese originals below if that file is missing or has no
+  // entry for this language yet (keeps this working even if legal_i18n.js fails to load).
+  const lang = window.I18N ? window.I18N.getCurrentLang() : 'ja';
+  const pack = (window.LEGAL_I18N && (window.LEGAL_I18N[lang] || window.LEGAL_I18N.ja)) || null;
+  const terms = pack ? pack.terms : TERMS_OF_SERVICE_MD;
+  const privacy = pack ? pack.privacy : PRIVACY_POLICY_MD;
+  content.innerHTML = legalMarkdownToHtml(terms) + '<hr class="legal-divider">' + legalMarkdownToHtml(privacy);
   modal.classList.remove('hidden');
 }
 function hideLegalModal() { document.getElementById('legal-modal').classList.add('hidden'); }
