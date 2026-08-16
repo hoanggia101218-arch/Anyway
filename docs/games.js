@@ -1761,6 +1761,11 @@ const GAME_DEFS = [
   // after every <script> tag has loaded, so this works regardless of the two files' load order.
   { id: 'royale', title: 'エレメント・ロワイヤル', genre: 'アクション',
     mount: (container, cbs, config) => window.RoyaleGame.mount(container, cbs, config) },
+  // task63/82: the other half of the "エレメント" ruleset pair (4vs4 soccer). Same deferred-
+  // wrapper reasoning as 'royale' above -- window.CupGame is looked up at mount-call time so
+  // load order between cup.js and this file doesn't matter.
+  { id: 'cup', title: 'エレメント・カップ', genre: 'アクション',
+    mount: (container, cbs, config) => window.CupGame.mount(container, cbs, config) },
 ];
 
 window.GAME_DEFS = GAME_DEFS;
@@ -1773,7 +1778,11 @@ window.GAME_DEFS = GAME_DEFS;
 // isn't available yet at top-level here -- app.js calls window.applyGameDefsI18n() once after
 // i18n.js is loaded, and registers it with I18N.onLangChange for live switching.
 const GENRE_KEY_BY_JA = { 'アクション': 'action', 'タイミング': 'timing', 'パズル': 'puzzle', '記憶': 'memory' };
-GAME_DEFS.forEach((def) => { def._jaTitle = def.title; def._jaGenre = def.genre; });
+GAME_DEFS.forEach((def) => {
+  def._jaTitle = def.title; def._jaGenre = def.genre;
+  (def.params || []).forEach((p) => { p._jaLabel = p.label; });
+  (def.choiceParams || []).forEach((p) => { p._jaLabel = p.label; });
+});
 function applyGameDefsI18n() {
   if (!window.I18N) return;
   const t = window.I18N.t;
@@ -1783,6 +1792,18 @@ function applyGameDefsI18n() {
     const genreKey = GENRE_KEY_BY_JA[def._jaGenre];
     def.genre = genreKey ? t('genre_' + genreKey) : def._jaGenre;
     if (def.genre === 'genre_' + genreKey) def.genre = def._jaGenre;
+    // task55 Phase4 (2026-08-15): same in-place-translate pattern for the create-post form's
+    // slider/choice labels (renderCreateForm in app.js reads p.label directly, unchanged).
+    (def.params || []).forEach((p) => {
+      const key = 'param_label_' + def.id + '_' + p.key;
+      p.label = t(key);
+      if (p.label === key) p.label = p._jaLabel;
+    });
+    (def.choiceParams || []).forEach((p) => {
+      const key = 'param_label_' + def.id + '_' + p.key;
+      p.label = t(key);
+      if (p.label === key) p.label = p._jaLabel;
+    });
   });
 }
 window.applyGameDefsI18n = applyGameDefsI18n;

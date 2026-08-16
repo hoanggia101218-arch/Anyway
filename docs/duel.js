@@ -301,9 +301,8 @@
 
   window.DuelSystem = {
     INVITE_PREFIX,
-    startReactionDuel: (sb, me) => startOpenDuel(sb, 'reaction', me),
     startOpenDuel, // generic (sb, gameId, me) -- any gameId other than 'reaction' runs the score-race
-    openFriendPicker: (sb, me, friends) => openFriendPicker(sb, 'reaction', '反射神経テスト', me, friends),
+    openFriendPicker, // generic (sb, gameId, gameTitle, me, friends) -- task50: memory/slide use this
     acceptDuelInvite,
   };
 })();

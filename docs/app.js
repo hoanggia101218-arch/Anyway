@@ -92,6 +92,9 @@ const INTERSTITIAL_EVERY_N_CARDS = 5; // required-ad placement (task 30 item 3a)
 // Toshiba (task52): open-matching (⚔️ only, no フレンド招待) duel expansion for these games.
 // ('mathrush', 'whack' were removed along with their games — see the 2026-08-14 game-list cut.)
 const OPEN_DUEL_GAME_IDS = ['dodge', 'flap'];
+// Lenovo (task50): フレンド招待のみ (no open ⚔️ matching) duel expansion for these games.
+// ('simon' was in the original task50 assignment but was removed in the 2026-08-14 game-list cut.)
+const FRIEND_DUEL_GAME_IDS = ['memory', 'slide'];
 async function maybeShowInterstitial() {
   const admob = admobPlugin();
   if (!admob) return;
@@ -929,6 +932,7 @@ async function initFeed(user) {
       </div>
       <div class="side-actions">
         ${['aim', ...OPEN_DUEL_GAME_IDS].includes(def.id) ? `<div style="text-align:center;"><button class="duel-btn">⚔️</button></div>` : ''}
+        ${FRIEND_DUEL_GAME_IDS.includes(def.id) ? `<div style="text-align:center;"><button class="friend-duel-btn">👥</button></div>` : ''}
         <div style="text-align:center;">
           <button class="like-btn">♡</button>
           <div class="action-count like-count">0</div>
@@ -956,6 +960,14 @@ async function initFeed(user) {
       duelBtn.addEventListener('click', () => {
         if (user.isGuest) return showCardHint(card, '対戦するにはログインしてください');
         window.DuelSystem.startOpenDuel(sb, def.id, user);
+      });
+    }
+
+    const friendDuelBtn = card.querySelector('.friend-duel-btn');
+    if (friendDuelBtn) {
+      friendDuelBtn.addEventListener('click', () => {
+        if (user.isGuest) return showCardHint(card, '対戦するにはログインしてください');
+        window.DuelSystem.openFriendPicker(sb, def.id, def.title, user, getFriendProfiles());
       });
     }
 
@@ -1230,7 +1242,6 @@ async function initFeed(user) {
       <ul class="map-feature-list">${map.features.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}</ul>
       <p class="map-card-history">${escapeHtml(map.history)}</p>
       <button class="post-btn map-select-btn">選択</button>
-      <button class="post-btn map-3d-btn" style="margin-top:8px;background:linear-gradient(180deg, rgba(78,168,255,0.9), rgba(50,120,220,0.75));">🗺️ 3Dで配置して投稿</button>
     `;
     const tile = card.querySelector('.map-photo-tile');
     let photoIdx = 0;
@@ -1245,80 +1256,27 @@ async function initFeed(user) {
     card.querySelector('.map-photo-nav.next').addEventListener('click', () => showPhoto(photoIdx + 1));
     card.querySelectorAll('.map-photo-dot').forEach((dot, di) => dot.addEventListener('click', () => showPhoto(di)));
     card.querySelector('.map-select-btn').addEventListener('click', () => {
-      renderTemplateGrid(map);
-    });
-    card.querySelector('.map-3d-btn').addEventListener('click', () => {
-      render3DSceneEditor(map);
+      renderRuleSelector(map);
     });
     return card;
   }
 
-  // 3D scene editor, restored 2026-08-14 as its own path (decoupled from Element Arena, which
-  // owned this screen before being deleted along with 7 other games). map-editor.js itself is
-  // untouched and still hard-requires placing at least one "character" before its confirm
-  // button enables (see its own me-confirm button / primaryCharPlacement gating) -- rather than
-  // edit that shared file, this feeds it a small generic decorative avatar roster (plain colors,
-  // no gameplay stats) so placement still works, and simply ignores the returned charId: the
-  // 3D placement here is a creative "set the scene" step only, it doesn't feed into any specific
-  // game's mechanics right now (no surviving game reads config.mapLayout). After confirming,
-  // this hands off to the same plain game picker (renderTemplateGrid) used by the "選択" button,
-  // so the user still picks which actual game the post plays as.
-  let activeMapEditor = null;
-  function waitForMapEditor(cb) {
-    if (window.MapEditor) { cb(); return; }
-    let tries = 0;
-    const iv = setInterval(() => {
-      tries += 1;
-      if (window.MapEditor || tries > 50) { clearInterval(iv); cb(); }
-    }, 100);
-  }
-  const SCENE_AVATARS = [
-    { id: 'red', name: 'レッド', color: '#ff4b4b', icon: '🔴' },
-    { id: 'blue', name: 'ブルー', color: '#4ea8ff', icon: '🔵' },
-    { id: 'green', name: 'グリーン', color: '#31d158', icon: '🟢' },
-    { id: 'yellow', name: 'イエロー', color: '#ffd23f', icon: '🟡' },
-    { id: 'purple', name: 'パープル', color: '#b06bff', icon: '🟣' },
-    { id: 'white', name: 'ホワイト', color: '#f5f5f5', icon: '⚪' },
+  // Rule selector (2026-08-16): DELL's original task63 note promised "まず今すぐできる分(ツール
+  // にルール選択画面を追加、選ばないと次へ進めない)を実装します" for the two proposed new
+  // multiplayer rules (エレメント・ロワイヤル=battle royale, エレメント・カップ=4vs4 soccer).
+  // That screen (RULE_DEFS/renderRuleSelector) did get built, but was deleted in task68 as
+  // collateral damage of removing Element Arena (it was wired to Element Arena's survival mode
+  // at the time). Re-added here, scoped to the two rules DELL actually proposed: ロワイヤル is
+  // ready (task74's royale.js), カップ isn't built yet so it's shown disabled/"準備中" — matching
+  // the "選ばないと次へ進めない" requirement via a disabled "次へ" button until a ready rule is
+  // picked, same interaction model DELL described.
+  const RULE_DEFS = [
+    { id: 'royale', title: 'エレメント・ロワイヤル', icon: '⚔️', gameId: 'royale', ready: true,
+      desc: '最大10人のバトルロイヤル。オンライン中のプレイヤーとマッチングし、足りない分はボットで補充。相手を倒すとその力を一時的に吸収してパワーアップ。' },
+    { id: 'cup', title: 'エレメント・カップ', icon: '⚽', gameId: 'cup', ready: true,
+      desc: '4vs4のサッカー。炎属性のシュートは曲がる軌道になる。' },
   ];
-  function render3DSceneEditor(map) {
-    const body = document.getElementById('create-panel-body');
-    body.innerHTML = '';
-    if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
-    const container = document.createElement('div');
-    container.className = 'map-editor-container';
-    body.appendChild(container);
-    waitForMapEditor(() => {
-      if (!window.MapEditor) {
-        container.textContent = '3Dエディタの読み込みに失敗しました。通信状況を確認してもう一度お試しください。';
-        return;
-      }
-      const bgPhoto = map.photos && map.photos[0];
-      activeMapEditor = window.MapEditor.mount(container, {
-        mapName: map.name,
-        mapPhotoUrl: bgPhoto && bgPhoto.image,
-        mapColor: (bgPhoto && bgPhoto.color) || '#222',
-        characters: SCENE_AVATARS,
-        onBack: () => { if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; } renderCreatePanel(); },
-        onConfirm: () => {
-          if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
-          renderTemplateGrid(map);
-        },
-      });
-    });
-  }
-
-  // Plain game picker for "post about this map" (2026-08-14): the previous version of this
-  // screen was a 3D "stand on the map, pick your spirit" character roster built entirely
-  // around Element Arena (map-editor.js's window.MapEditor + games.js's ELEMENT_CHARACTERS),
-  // with a rule-selector step in front of it whose only "ready" option was Element Arena
-  // survival. Element Arena was removed wholesale (still just 2D canvas sprites despite being
-  // pitched as a 3D showcase), which took the rule selector and the character roster down with
-  // it — neither had anything left to offer once there was no Element Arena game to configure.
-  // The plain list below (excluding 'mymaze', which already has its own dedicated drawing card
-  // above) is reused as the second half of both the "選択" quick path and the "🗺️ 3Dで配置して
-  // 投稿" path above -- posts about the selected map via the same renderCreateForm() used
-  // everywhere else, just with mapName set.
-  function renderTemplateGrid(map) {
+  function renderRuleSelector(map) {
     const body = document.getElementById('create-panel-body');
     body.innerHTML = '';
 
@@ -1330,20 +1288,128 @@ async function initFeed(user) {
 
     const intro = document.createElement('p');
     intro.className = 'panel-note';
-    intro.textContent = `「${map.name}」を舞台にするゲームを選んでください`;
+    intro.textContent = `「${map.name}」で遊ぶルールを選んでください`;
     body.appendChild(intro);
 
-    const grid = document.createElement('div');
-    grid.className = 'template-game-grid';
-    GAME_DEFS.filter((def) => def.id !== 'mymaze').forEach((def) => {
+    const list = document.createElement('div');
+    list.className = 'rule-list';
+    body.appendChild(list);
+
+    let selected = null;
+    const cardEls = RULE_DEFS.map((rule) => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'template-game-card';
-      btn.innerHTML = `<div class="template-game-title">${escapeHtml(def.title)}</div><div class="template-game-genre">${escapeHtml(def.genre)}</div>`;
-      btn.addEventListener('click', () => renderCreateForm(def, map.name, null));
-      grid.appendChild(btn);
+      btn.className = 'rule-card' + (rule.ready ? '' : ' disabled');
+      if (!rule.ready) btn.disabled = true;
+      btn.innerHTML = `
+        <span class="rule-card-icon">${rule.icon}</span>
+        <span class="rule-card-body">
+          <span class="rule-card-title-row">
+            <span class="rule-card-title">${escapeHtml(rule.title)}</span>
+            ${rule.ready ? '' : '<span class="rule-card-badge">準備中</span>'}
+          </span>
+          <span class="rule-card-desc">${escapeHtml(rule.desc)}</span>
+        </span>
+      `;
+      if (rule.ready) {
+        btn.addEventListener('click', () => {
+          selected = rule;
+          cardEls.forEach((c) => c.classList.toggle('selected', c === btn));
+          nextBtn.disabled = false;
+        });
+      }
+      list.appendChild(btn);
+      return btn;
     });
-    body.appendChild(grid);
+
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'post-btn';
+    nextBtn.textContent = '次へ →';
+    nextBtn.disabled = true;
+    nextBtn.style.margin = '4px 16px 16px';
+    nextBtn.style.width = 'calc(100% - 32px)';
+    nextBtn.addEventListener('click', () => {
+      if (selected) render3DSceneEditor(map, selected);
+    });
+    body.appendChild(nextBtn);
+  }
+
+  // 3D scene editor (2026-08-15 restore, corrected same day): the user clarified that the
+  // original "消して" request was scoped to the official 2D-pretending-to-be-3D Element Arena
+  // MINIGAME code, not to the 3D spirit models (spirit-models.js's buildBlaze etc., still fully
+  // intact and used by 精霊図鑑/elements-gallery.html) or the "stand on the map, pick your
+  // spirit" placement experience itself. Before Element Arena was deleted (task68), the flow was
+  // a single "選択" button straight into this 3D editor, where the *real 3D spirit model* you
+  // placed directly WAS the game you posted (element_<charId>) — no separate flat "which game?"
+  // list in between.
+  // First attempt at restoring this (same day) got the roster wrong: it built the character
+  // list from GAME_DEFS ids (dodge/skyduel/...) instead of the real spirit ids. Those ids don't
+  // exist in map-editor.js's CHAR_BUILDERS map (blaze/aqua/volt/gust/terra/frost/light/nox/
+  // leaf/plasma only), so buildCharacterInstance() would have silently returned null and placed
+  // nothing — the user caught this immediately from the roster showing generic game-genre emoji
+  // instead of the actual 3D characters. Fixed: the roster below IS the 10 real spirits (data
+  // lifted from elements-gallery.html's CHARACTERS array, the one other place their name/
+  // element/color still lives after task68 deleted games.js's copy), so CHAR_BUILDERS resolves
+  // correctly and a real 3D model renders when placed. Since there's no more element_<charId>
+  // game to route to 1:1, every placement posts as 'royale' (エレメント・ロワイヤル, the actual
+  // multiplayer spirit-battle game) — the closest real equivalent — with the chosen spirit's
+  // name folded into the post title so the choice isn't just discarded.
+  let activeMapEditor = null;
+  function waitForMapEditor(cb) {
+    if (window.MapEditor) { cb(); return; }
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries += 1;
+      if (window.MapEditor || tries > 50) { clearInterval(iv); cb(); }
+    }, 100);
+  }
+  const SPIRIT_AVATARS = [
+    { id: 'blaze', name: 'ブレイズ', element: '炎', color: '#e6551a', icon: '🔥', skillLine: '炎属性', ultimateName: 'とっておきの一撃' },
+    { id: 'aqua', name: 'アクア', element: '水', color: '#0288d1', icon: '💧', skillLine: '水属性・回復サポート', ultimateName: 'とっておきの一撃' },
+    { id: 'volt', name: 'ボルト', element: '雷', color: '#e6a800', icon: '⚡', skillLine: '雷属性・高速アタッカー', ultimateName: 'とっておきの一撃' },
+    { id: 'gust', name: 'ガスト', element: '風', color: '#4c9a2a', icon: '🌪️', skillLine: '風属性・機動型アタッカー', ultimateName: 'とっておきの一撃' },
+    { id: 'terra', name: 'テラ', element: '岩', color: '#6b7a3c', icon: '🪨', skillLine: '岩属性・タンク', ultimateName: 'とっておきの一撃' },
+    { id: 'frost', name: 'フロスト', element: '氷', color: '#3d94c2', icon: '❄️', skillLine: '氷属性・妨害型アタッカー', ultimateName: 'とっておきの一撃' },
+    { id: 'light', name: 'ライト', element: '光', color: '#d9a53a', icon: '✨', skillLine: '光属性・バランス型サポーター', ultimateName: 'とっておきの一撃' },
+    { id: 'nox', name: 'ノクス', element: '闇', color: '#4a2a80', icon: '🌑', skillLine: '闇属性・奇襲型アタッカー', ultimateName: 'とっておきの一撃' },
+    { id: 'leaf', name: 'リーフ', element: '植物', color: '#4f8a2c', icon: '🌿', skillLine: '植物属性・継続回復&拘束サポーター', ultimateName: 'とっておきの一撃' },
+    { id: 'plasma', name: 'プラズマ', element: 'エネルギー', color: '#6a3fc0', icon: '🔮', skillLine: 'エネルギー属性・万能型アタッカー', ultimateName: 'とっておきの一撃' },
+  ];
+  function render3DSceneEditor(map, rule) {
+    const body = document.getElementById('create-panel-body');
+    body.innerHTML = '';
+    if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
+    const container = document.createElement('div');
+    container.className = 'map-editor-container';
+    body.appendChild(container);
+    const bgPhoto = map.photos && map.photos[0];
+    waitForMapEditor(() => {
+      if (!window.MapEditor) {
+        container.textContent = '3Dエディタの読み込みに失敗しました。通信状況を確認してもう一度お試しください。';
+        return;
+      }
+      activeMapEditor = window.MapEditor.mount(container, {
+        mapName: map.name,
+        mapPhotoUrl: bgPhoto && bgPhoto.image,
+        mapColor: (bgPhoto && bgPhoto.color) || '#222',
+        characters: SPIRIT_AVATARS,
+        onBack: () => { if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; } renderRuleSelector(map); },
+        onConfirm: (charId, placements, rules) => {
+          const spirit = SPIRIT_AVATARS.find((s) => s.id === charId);
+          const def = GAME_DEFS.find((g) => g.id === (rule && rule.gameId));
+          if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
+          if (!def) { renderRuleSelector(map); return; }
+          const mapLayout = {
+            photoUrl: bgPhoto && bgPhoto.image,
+            color: (bgPhoto && bgPhoto.color) || '#222',
+            items: (placements || []).filter((p) => !(p.kind === 'character' && p.id === charId)),
+            rules: rules || { timeLimit: 0, difficulty: 1 },
+          };
+          const titleContext = spirit ? `${map.name}・${spirit.name}` : map.name;
+          renderCreateForm(def, titleContext, mapLayout);
+        },
+      });
+    });
   }
 
   function renderCreateForm(def, mapName = null, mapLayout = null) {
@@ -1471,7 +1537,8 @@ async function initFeed(user) {
   async function renderClubPanel() {
     clubPanelView = 'list';
     clubPanelClubId = null;
-    document.getElementById('club-panel-title').textContent = 'クラブ';
+    const t55c = window.I18N ? window.I18N.t : (k) => k;
+    document.getElementById('club-panel-title').textContent = t55c('club_panel_title');
     const body = document.getElementById('club-panel-body');
     body.innerHTML = '<p class="panel-note small">読み込み中...</p>';
     await fetchMyClub();
@@ -1479,22 +1546,22 @@ async function initFeed(user) {
     let html = '';
     if (myClub) {
       html += `
-        <p class="panel-note">所属中のクラブ</p>
+        <p class="panel-note">${escapeHtml(t55c('club_my_club_label'))}</p>
         <button class="search-result" id="my-club-link">
           <span class="search-result-title">🛡️ ${escapeHtml(myClub.name)}</span>
-          <span class="search-result-meta">${myClub.role === 'owner' ? 'オーナー' : 'メンバー'}</span>
+          <span class="search-result-meta">${myClub.role === 'owner' ? escapeHtml(t55c('club_role_owner')) : escapeHtml(t55c('club_role_member'))}</span>
         </button>
       `;
     } else {
       html += `
-        <p class="panel-note small">まだどのクラブにも所属していません。</p>
-        <button class="post-btn" id="create-club-btn">クラブを作成する</button>
+        <p class="panel-note small">${escapeHtml(t55c('club_no_club_yet'))}</p>
+        <button class="post-btn" id="create-club-btn">${escapeHtml(t55c('club_create_btn'))}</button>
       `;
     }
     html += `
       <div class="param-row" style="margin-top:20px;">
-        <label>クラブを検索</label>
-        <input type="text" id="club-search-input" class="create-title-input" placeholder="クラブ名で検索">
+        <label>${escapeHtml(t55c('club_search_label'))}</label>
+        <input type="text" id="club-search-input" class="create-title-input" placeholder="${escapeHtml(t55c('club_search_placeholder'))}">
       </div>
       <div id="club-search-results"></div>
     `;
@@ -1516,7 +1583,7 @@ async function initFeed(user) {
           <span class="search-result-title">🛡️ ${escapeHtml(c.name)}</span>
           <span class="search-result-meta">${escapeHtml(c.description || '')}</span>
         </button>
-      `).join('') || '<p class="panel-note small">見つかりませんでした</p>';
+      `).join('') || `<p class="panel-note small">${escapeHtml(t55c('search_no_results'))}</p>`;
       resultsEl.querySelectorAll('.club-search-item').forEach((btn) => {
         btn.addEventListener('click', () => renderClubDetail(Number(btn.dataset.clubId)));
       });
@@ -2101,10 +2168,11 @@ async function initFeed(user) {
     const input = document.getElementById('search-input');
     const results = document.getElementById('search-results');
     input.value = '';
-    results.innerHTML = '<p class="panel-note small">ゲーム名 または @ユーザーIDで検索してください</p>';
+    const t55s = window.I18N ? window.I18N.t : (k) => k;
+    results.innerHTML = `<p class="panel-note small">${escapeHtml(t55s('search_prompt'))}</p>`;
     input.oninput = () => {
       const q = input.value.trim().toLowerCase().replace(/^@/, '');
-      if (!q) { results.innerHTML = '<p class="panel-note small">ゲーム名 または @ユーザーIDで検索してください</p>'; return; }
+      if (!q) { results.innerHTML = `<p class="panel-note small">${escapeHtml(t55s('search_prompt'))}</p>`; return; }
       const matches = buildSearchIndex()
         .filter((item) => item.type === 'user'
           ? item.handle.toLowerCase().includes(q)
@@ -2115,14 +2183,14 @@ async function initFeed(user) {
         .map((x) => x.item);
       results.innerHTML = '';
       if (!matches.length) {
-        results.innerHTML = '<p class="panel-note small">見つかりませんでした</p>';
+        results.innerHTML = `<p class="panel-note small">${escapeHtml(t55s('search_no_results'))}</p>`;
         return;
       }
       matches.forEach((item) => {
         const row = document.createElement('button');
         row.className = 'search-result';
         if (item.type === 'user') {
-          row.innerHTML = `<span class="search-result-title">👤 @${escapeHtml(item.handle)}</span><span class="search-result-meta">${escapeHtml(item.username)} ・ タップしてメッセージを送る</span>`;
+          row.innerHTML = `<span class="search-result-title">👤 @${escapeHtml(item.handle)}</span><span class="search-result-meta">${escapeHtml(item.username)} ・ ${escapeHtml(t55s('search_tap_to_message'))}</span>`;
           row.addEventListener('click', () => jumpToUser(item));
           results.appendChild(row);
           return;
@@ -2142,17 +2210,18 @@ async function initFeed(user) {
   }
 
   function renderDmPanel() {
-    document.getElementById('dm-panel-title').textContent = 'メッセージ';
+    const t55d = window.I18N ? window.I18N.t : (k) => k;
+    document.getElementById('dm-panel-title').textContent = t55d('dm_panel_title');
     const body = document.getElementById('dm-panel-body');
     body.innerHTML = '';
 
     const startRow = document.createElement('div');
     startRow.className = 'param-row';
-    startRow.innerHTML = `<label>ユーザーIDで新しく話しかける</label><input type="text" id="dm-new-username" class="create-title-input" placeholder="ユーザーID"><p class="error hidden" id="dm-start-error"></p>`;
+    startRow.innerHTML = `<label>${escapeHtml(t55d('dm_new_chat_label'))}</label><input type="text" id="dm-new-username" class="create-title-input" placeholder="${escapeHtml(t55d('dm_userid_placeholder'))}"><p class="error hidden" id="dm-start-error"></p>`;
     body.appendChild(startRow);
     const startBtn = document.createElement('button');
     startBtn.className = 'post-btn';
-    startBtn.textContent = 'チャットを開始';
+    startBtn.textContent = t55d('dm_start_chat_btn');
     startBtn.addEventListener('click', async () => {
       const errorEl = document.getElementById('dm-start-error');
       errorEl.classList.add('hidden');
@@ -2160,7 +2229,7 @@ async function initFeed(user) {
       if (!inputHandle) return;
       const { data: prof } = await sb.from('profiles').select('id, username, color, handle').ilike('handle', inputHandle).limit(1).maybeSingle();
       if (!prof || prof.id === user.id) {
-        errorEl.textContent = !prof ? 'ユーザーが見つかりませんでした' : '自分にはメッセージを送れません';
+        errorEl.textContent = !prof ? t55d('dm_user_not_found') : t55d('dm_cannot_message_self');
         errorEl.classList.remove('hidden');
         return;
       }
@@ -2173,13 +2242,13 @@ async function initFeed(user) {
     if (latestMessageByPartner.size === 0) {
       const p = document.createElement('p');
       p.className = 'panel-note small';
-      p.textContent = 'まだ会話はありません。';
+      p.textContent = t55d('dm_no_conversations');
       listWrap.appendChild(p);
     }
     latestMessageByPartner.forEach((lastMsg, otherId) => {
       if (isHidden(otherId)) return;
       const profile = profilesById.get(otherId);
-      const handle = profile ? (profile.handle || profile.username) : '不明なユーザー';
+      const handle = profile ? (profile.handle || profile.username) : t55d('dm_unknown_user');
       const isUnread = lastMsg.sender_id !== user.id && (!dmReadMap.get(otherId) || new Date(lastMsg.created_at) > new Date(dmReadMap.get(otherId)));
       const previewText = typeof lastMsg.body === 'string' && lastMsg.body.startsWith(window.DuelSystem.INVITE_PREFIX)
         ? `⚔️ ${lastMsg.body.split('|')[2] || '対戦'}の招待`
