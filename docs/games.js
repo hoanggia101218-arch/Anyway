@@ -1766,6 +1766,12 @@ const GAME_DEFS = [
   // load order between cup.js and this file doesn't matter.
   { id: 'cup', title: 'エレメント・カップ', genre: 'アクション',
     mount: (container, cbs, config) => window.CupGame.mount(container, cbs, config) },
+  // task80: Level Devil-inspired "1 screen, 1 mean trick" platformer. Solo + 4-player coop
+  // (quick-match via time-windowed Supabase room key, see trapdojo.js runCoop). Own file for
+  // the same reason as royale/cup: its own Supabase realtime client + a lot of stage/physics
+  // code that doesn't belong in this file. Same deferred-wrapper reasoning as royale/cup above.
+  { id: 'trapdojo', title: 'トラップ道場', genre: 'アクション',
+    mount: (container, cbs, config) => window.TrapDojo.mount(container, cbs, config) },
 ];
 
 window.GAME_DEFS = GAME_DEFS;
