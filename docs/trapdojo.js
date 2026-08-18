@@ -68,7 +68,6 @@
       { x: 20, y: 190 }, { x: 430, y: 60, w: 30, h: 40 },
       [
         { x: 0, y: 230, w: 480, h: 20 },
-        { x: 150, y: 170, w: 90, h: 14 },
         { x: 330, y: 110, w: 100, h: 14 },
       ],
       [
@@ -80,7 +79,7 @@
       { x: 20, y: 60 }, { x: 430, y: 190, w: 30, h: 40 },
       [
         { x: 0, y: 100, w: 140, h: 14 },
-        { x: 0, y: 230, w: 480, h: 20 },
+        { x: 0, y: 230, w: 180, h: 20 },
         { x: 330, y: 230, w: 150, h: 20 },
       ],
       [
@@ -417,7 +416,7 @@
       const [sx, sy] = toScreenPoint(canvas, p.x + PLAYER_W / 2, p.y + PLAYER_H, scale);
       drawBlockChar(ctx, sx, sy, scale, elementColor, facing, walkPhase, false);
       ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(`${stg.difficulty} ${stageIdx + 1}/${stages.length}　クリア数: ${cleared}`, 8, 16);
+      ctx.fillText(`${stg.difficulty} ${stageIdx + 1}/${stages.length}　クリア数: ${cleared}`, 8, 40);
     });
 
     return () => {
@@ -592,7 +591,7 @@
         drawBlockChar(ctx, sx, sy, scale, elementColor, facing, walkPhase, false);
       }
       ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(`協力プレイ ${stg.difficulty} (${finishers.size}/${Math.max(1, Object.keys(channel.presenceState()).length)}人ゴール)`, 8, 16);
+      ctx.fillText(`協力プレイ ${stg.difficulty} (${finishers.size}/${Math.max(1, Object.keys(channel.presenceState()).length)}人ゴール)`, 8, 40);
     });
 
     return () => {

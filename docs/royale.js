@@ -350,7 +350,7 @@
 
       ctx.fillStyle = '#fff'; ctx.font = '13px sans-serif'; ctx.textAlign = 'left';
       const survivors = aliveRealIds().length + aliveBotList().length;
-      ctx.fillText(phase === 'lobby' ? gt('royale_matching', 'マッチング中…') : gt('royale_survivors', '生存: {n}人').replace('{n}', survivors), 10, 20);
+      ctx.fillText(phase === 'lobby' ? gt('royale_matching', 'マッチング中…') : gt('royale_survivors', '生存: {n}人').replace('{n}', survivors), 10, 40);
     });
 
     return () => {

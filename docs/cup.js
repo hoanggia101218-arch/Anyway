@@ -419,10 +419,10 @@
       drawBurst(ctx, burst, dt);
 
       ctx.fillStyle = '#fff'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(`${score.A} - ${score.B}`, canvas.width / 2, 24);
+      ctx.fillText(`${score.A} - ${score.B}`, canvas.width / 2, 44);
       ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
       const remainSec = phase === 'playing' ? Math.max(0, Math.ceil((matchEndAt - performance.now()) / 1000)) : null;
-      ctx.fillText(phase === 'lobby' ? 'マッチング中…' : phase === 'playing' ? `残り${remainSec}秒 / あなた:${myTeam}チーム` : '試合終了', 10, 20);
+      ctx.fillText(phase === 'lobby' ? 'マッチング中…' : phase === 'playing' ? `残り${remainSec}秒 / あなた:${myTeam}チーム` : '試合終了', 10, 40);
     });
 
     return () => {

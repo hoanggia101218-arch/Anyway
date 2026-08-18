@@ -1023,7 +1023,7 @@ function mountMyMaze(container, { onScore, onHint }, config = {}) {
     drawBurst(ctx, burst, dt);
     ctx.restore();
     ctx.fillStyle = '#fff'; ctx.font = '14px sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText('❤️'.repeat(Math.max(0, lives)), 8, 20);
+    ctx.fillText('❤️'.repeat(Math.max(0, lives)), 8, 40);
     if (dead) {
       ctx.textAlign = 'center'; ctx.font = 'bold 16px sans-serif';
       ctx.fillText(gt('restart_hint', 'タップでリスタート'), canvas.width / 2, canvas.height / 2);
@@ -1134,7 +1134,7 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
     ctx.fillRect(head.x * cell + 1, head.y * cell + 1, cell - 2, cell - 2);
     drawBurst(ctx, particles, dt);
     ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText(`Lv.${level}  ${filled.size}/${levelCells}`, 8, 18);
+    ctx.fillText(`Lv.${level}  ${filled.size}/${levelCells}`, 8, 40);
     if (dead) {
       ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(gt('restart_hint_button', 'タップ/ボタンでリスタート'), canvas.width / 2, canvas.height / 2);
