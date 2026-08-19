@@ -8,9 +8,10 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; background: #0c0c10; color: #fff;
     font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; }
-  .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 60px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
-  .sub { font-size: 12px; opacity: 0.6; margin: 0 0 24px; }
+  h2 { font-size: 16px; margin: 0 0 12px; }
+  .sub { font-size: 12px; opacity: 0.6; margin: 0 0 20px; }
   .login-box { max-width: 320px; margin: 60px auto; padding: 24px; border-radius: 16px;
     background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15); }
   .login-box input { width: 100%; padding: 11px; margin-bottom: 10px; border-radius: 10px;
@@ -19,10 +20,25 @@
     background: #fff; color: #0c0c10; font-weight: 700; font-size: 14px; }
   .error { color: #ff6b6b; font-size: 12px; margin: 8px 0 0; }
   .hidden { display: none !important; }
-  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 8px; }
-  .toolbar select, .toolbar button { padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; gap: 8px; flex-wrap: wrap; }
+  .toolbar select, .toolbar input, .toolbar button { padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.2);
     background: rgba(255,255,255,0.08); color: #fff; font-size: 13px; }
+  .toolbar input { flex: 1; min-width: 140px; }
   .toolbar button { cursor: pointer; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+  .tab-btn { flex: 1; padding: 10px 8px; text-align: center; font-size: 13px; font-weight: 700; cursor: pointer;
+    background: none; border: none; color: rgba(255,255,255,0.55); border-bottom: 2px solid transparent; }
+  .tab-btn.active { color: #fff; border-bottom-color: #fe2c55; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  .stat-row { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  .stat-card { flex: 1; min-width: 110px; padding: 12px 14px; border-radius: 12px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); }
+  .stat-card .num { font-size: 20px; font-weight: 800; }
+  .stat-card .label { font-size: 11px; opacity: 0.6; margin-top: 2px; }
+
   .row { padding: 14px; border-radius: 12px; background: rgba(255,255,255,0.05);
     border: 1px solid rgba(255,255,255,0.12); margin-bottom: 10px; }
   .row-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
@@ -32,6 +48,20 @@
   .row-time { font-size: 11px; opacity: 0.55; }
   .row-detail { font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
   .empty, .loading { text-align: center; padding: 40px 0; opacity: 0.6; font-size: 13px; }
+
+  table.user-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.user-table th, table.user-table td { text-align: left; padding: 9px 8px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  table.user-table th { opacity: 0.6; font-weight: 600; font-size: 11px; cursor: pointer; user-select: none; }
+  table.user-table th:hover { opacity: 1; }
+  table.user-table td.num-col { font-variant-numeric: tabular-nums; text-align: right; }
+
+  .report-box { padding: 16px; border-radius: 12px; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.12); font-size: 13px; line-height: 1.7; }
+  .report-box h1, .report-box h2, .report-box h3 { margin: 16px 0 8px; }
+  .report-box h1:first-child, .report-box h2:first-child, .report-box h3:first-child { margin-top: 0; }
+  .report-box ul { padding-left: 20px; }
+  .report-box code { background: rgba(255,255,255,0.1); padding: 1px 5px; border-radius: 4px; }
+  .note { font-size: 12px; opacity: 0.55; line-height: 1.6; margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -46,16 +76,44 @@
   </div>
 
   <div id="admin-view" class="hidden">
-    <h1>🐛 バグ・通報レポート</h1>
-    <p class="sub">reports テーブルの内容を新しい順に表示しています(このページは運営者アカウントのみ閲覧できます)</p>
     <div class="toolbar">
-      <select id="reason-filter">
-        <option value="">すべて</option>
-        <option value="bug_report">バグ報告のみ</option>
-      </select>
+      <div>
+        <h1 style="margin-bottom:2px;">Anyway 管理画面</h1>
+        <p class="sub" style="margin-bottom:0;">運営者アカウントのみ閲覧できます</p>
+      </div>
       <button id="logout-btn">ログアウト</button>
     </div>
-    <div id="list"></div>
+
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="reports">🐛 通報・バグ</button>
+      <button class="tab-btn" data-tab="users">👤 利用者</button>
+      <button class="tab-btn" data-tab="business">📊 経営レポート</button>
+    </div>
+
+    <div id="tab-reports" class="tab-panel active">
+      <div id="report-stats" class="stat-row"></div>
+      <div class="toolbar">
+        <select id="reason-filter">
+          <option value="">すべて</option>
+          <option value="bug_report">バグ報告のみ</option>
+        </select>
+      </div>
+      <div id="report-list"></div>
+    </div>
+
+    <div id="tab-users" class="tab-panel">
+      <div id="user-stats" class="stat-row"></div>
+      <div class="toolbar">
+        <input type="text" id="user-search" placeholder="ユーザー名 / @ハンドルで検索">
+      </div>
+      <div id="user-list"></div>
+      <p class="note">Supabaseの認証プライバシー上、この画面(anonキー)からはメールアドレス・生年月日・登録日時は取得できません。表示できるのは公開プロフィール情報(ユーザー名・ハンドル・コイン残高)のみです。</p>
+    </div>
+
+    <div id="tab-business" class="tab-panel">
+      <div id="business-content" class="report-box">読み込み中…</div>
+      <p class="note">実際の売上(¥)・広告収益・アプリDL数は、このアプリのデータベースには保存されていません(App Store Connect / Google Play Console / AdMobでのみ確認可能)。このタブはDELL(COO)が定期的にまとめる経営レポートを表示する場所です。最新にするには <code>output/coo_reports/latest.md</code> を更新してください。</p>
+    </div>
   </div>
 </div>
 
@@ -64,11 +122,10 @@
 (function () {
   // Same public project as the main app (output/app.js) -- this is the publishable anon key,
   // safe to embed client-side. Access control here is NOT a Supabase RLS role check, it's a
-  // simple allow-list on the logged-in user's email (see OWNER_EMAIL below), matching task71's
-  // "MVP: only show this to the owner account" scope. If reports' RLS policy restricts SELECT to
-  // the reporter's own rows, the owner account will only see reports it filed itself -- see the
-  // honest note about this in status.json task71/84; a real fix needs a Supabase-side RLS policy
-  // change (or a service-role-backed endpoint) that this static page has no access to make.
+  // simple allow-list on the logged-in user's email (see OWNER_EMAIL below). If a table's RLS
+  // policy restricts SELECT to the querying user's own rows, this page will only see its own
+  // data for that table -- there's no service-role key here (that must never be embedded
+  // client-side), so a real fix for any such gap needs a Supabase-side RLS policy change.
   const SUPABASE_URL = 'https://qmqmpfjgxgwmsdeqpbiu.supabase.co';
   const SUPABASE_ANON_KEY = 'sb_publishable_wGQyRnhd3bxGmcppLkOx8w_-xJI3qn1';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -77,8 +134,6 @@
   const loginView = document.getElementById('login-view');
   const adminView = document.getElementById('admin-view');
   const loginError = document.getElementById('login-error');
-  const list = document.getElementById('list');
-  let allReports = [];
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -87,9 +142,44 @@
     try { return new Date(iso).toLocaleString('ja-JP'); } catch (e) { return iso || ''; }
   }
 
-  function renderList() {
+  // ---------- Tabs ----------
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  const tabPanels = {
+    reports: document.getElementById('tab-reports'),
+    users: document.getElementById('tab-users'),
+    business: document.getElementById('tab-business'),
+  };
+  const loadedTabs = new Set();
+  function activateTab(name) {
+    tabButtons.forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+    Object.entries(tabPanels).forEach(([k, el]) => el.classList.toggle('active', k === name));
+    if (!loadedTabs.has(name)) {
+      loadedTabs.add(name);
+      if (name === 'reports') loadReports();
+      if (name === 'users') loadUsers();
+      if (name === 'business') loadBusinessReport();
+    }
+  }
+  tabButtons.forEach((b) => b.addEventListener('click', () => activateTab(b.dataset.tab)));
+
+  // ---------- Reports tab ----------
+  let allReports = [];
+  function renderReportStats() {
+    const total = allReports.length;
+    const bugCount = allReports.filter((r) => r.reason === 'bug_report').length;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const todayCount = allReports.filter((r) => new Date(r.created_at) >= today).length;
+    document.getElementById('report-stats').innerHTML = `
+      <div class="stat-card"><div class="num">${total}</div><div class="label">合計件数</div></div>
+      <div class="stat-card"><div class="num">${bugCount}</div><div class="label">バグ報告</div></div>
+      <div class="stat-card"><div class="num">${total - bugCount}</div><div class="label">その他(通報等)</div></div>
+      <div class="stat-card"><div class="num">${todayCount}</div><div class="label">本日</div></div>
+    `;
+  }
+  function renderReportList() {
     const filter = document.getElementById('reason-filter').value;
     const rows = filter ? allReports.filter((r) => r.reason === filter) : allReports;
+    const list = document.getElementById('report-list');
     if (!rows.length) { list.innerHTML = '<p class="empty">レポートはありません</p>'; return; }
     list.innerHTML = rows.map((r) => `
       <div class="row">
@@ -101,22 +191,125 @@
       </div>
     `).join('');
   }
-
   async function loadReports() {
-    list.innerHTML = '<p class="loading">読み込み中…</p>';
+    document.getElementById('report-list').innerHTML = '<p class="loading">読み込み中…</p>';
     const { data, error } = await sb.from('reports').select('*').order('created_at', { ascending: false }).limit(200);
     if (error) {
-      list.innerHTML = `<p class="empty">読み込みに失敗しました: ${escapeHtml(error.message)}<br>(reportsテーブルのRLSが本人分の行しか読めない設定の場合、この運営者アカウント自身が出した通報しか見えません。全件見るにはSupabase側のRLSポリシー調整が必要です)</p>`;
+      document.getElementById('report-list').innerHTML = `<p class="empty">読み込みに失敗しました: ${escapeHtml(error.message)}<br>(reportsテーブルのRLSが本人分の行しか読めない設定の場合、この運営者アカウント自身が出した通報しか見えません。全件見るにはSupabase側のRLSポリシー調整が必要です)</p>`;
       return;
     }
     allReports = data || [];
-    renderList();
+    renderReportStats();
+    renderReportList();
+  }
+  document.getElementById('reason-filter').addEventListener('change', renderReportList);
+
+  // ---------- Users tab ----------
+  let allUsers = [];
+  let userSort = { key: 'coins', dir: -1 };
+  function renderUserStats() {
+    const total = allUsers.length;
+    const totalCoins = allUsers.reduce((sum, u) => sum + (Number(u.coins) || 0), 0);
+    const withCoins = allUsers.filter((u) => Number(u.coins) > 0).length;
+    document.getElementById('user-stats').innerHTML = `
+      <div class="stat-card"><div class="num">${total}</div><div class="label">登録ユーザー数</div></div>
+      <div class="stat-card"><div class="num">${totalCoins.toLocaleString('ja-JP')}</div><div class="label">流通コイン合計</div></div>
+      <div class="stat-card"><div class="num">${withCoins}</div><div class="label">コイン保有ユーザー</div></div>
+    `;
+  }
+  function renderUserList() {
+    const q = document.getElementById('user-search').value.trim().toLowerCase();
+    let rows = allUsers;
+    if (q) rows = rows.filter((u) => (u.username || '').toLowerCase().includes(q) || (u.handle || '').toLowerCase().includes(q));
+    rows = rows.slice().sort((a, b) => {
+      const av = a[userSort.key], bv = b[userSort.key];
+      if (typeof av === 'number' || typeof bv === 'number') return ((Number(av) || 0) - (Number(bv) || 0)) * userSort.dir;
+      return String(av || '').localeCompare(String(bv || '')) * userSort.dir;
+    });
+    const list = document.getElementById('user-list');
+    if (!rows.length) { list.innerHTML = '<p class="empty">該当するユーザーがいません</p>'; return; }
+    list.innerHTML = `
+      <table class="user-table">
+        <thead><tr>
+          <th data-key="username">ユーザー名</th>
+          <th data-key="handle">@ハンドル</th>
+          <th data-key="coins">コイン</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((u) => `
+            <tr>
+              <td>${escapeHtml(u.username || '(不明)')}</td>
+              <td>@${escapeHtml(u.handle || '')}</td>
+              <td class="num-col">${(Number(u.coins) || 0).toLocaleString('ja-JP')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    list.querySelectorAll('th[data-key]').forEach((th) => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.key;
+        userSort = { key, dir: userSort.key === key ? -userSort.dir : -1 };
+        renderUserList();
+      });
+    });
+  }
+  async function loadUsers() {
+    document.getElementById('user-list').innerHTML = '<p class="loading">読み込み中…</p>';
+    const { data, error } = await sb.from('profiles').select('id, username, handle, coins').limit(2000);
+    if (error) {
+      document.getElementById('user-list').innerHTML = `<p class="empty">読み込みに失敗しました: ${escapeHtml(error.message)}</p>`;
+      return;
+    }
+    allUsers = data || [];
+    renderUserStats();
+    renderUserList();
+  }
+  document.getElementById('user-search').addEventListener('input', renderUserList);
+
+  // ---------- Business report tab ----------
+  // Minimal markdown -> HTML (same lightweight subset app.js's legal modal uses): h1-h3,
+  // **bold**, bullet lists, paragraphs. Not a general-purpose parser.
+  function markdownToHtml(md) {
+    const lines = md.split('\n');
+    let html = '';
+    let inList = false;
+    function inline(s) { return escapeHtml(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'); }
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (line === '') { if (inList) { html += '</ul>'; inList = false; } continue; }
+      if (line.startsWith('### ')) { if (inList) { html += '</ul>'; inList = false; } html += `<h3>${inline(line.slice(4))}</h3>`; continue; }
+      if (line.startsWith('## ')) { if (inList) { html += '</ul>'; inList = false; } html += `<h2>${inline(line.slice(3))}</h2>`; continue; }
+      if (line.startsWith('# ')) { if (inList) { html += '</ul>'; inList = false; } html += `<h1>${inline(line.slice(2))}</h1>`; continue; }
+      if (line.startsWith('- ') || line.startsWith('■')) {
+        if (!inList) { html += '<ul>'; inList = true; }
+        html += `<li>${inline(line.replace(/^-\s*/, '').replace(/^■\s*/, ''))}</li>`;
+        continue;
+      }
+      if (inList) { html += '</ul>'; inList = false; }
+      html += `<p>${inline(line)}</p>`;
+    }
+    if (inList) html += '</ul>';
+    return html;
+  }
+  async function loadBusinessReport() {
+    const box = document.getElementById('business-content');
+    try {
+      const res = await fetch('coo_reports/latest.md', { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      box.innerHTML = markdownToHtml(text);
+    } catch (err) {
+      box.innerHTML = `<p>経営レポートの読み込みに失敗しました(${escapeHtml(err.message)})。file:// で直接開いている場合はローカルファイルの読み込みがブラウザ側でブロックされます。公開URL(nexora-anyway.netlify.app など)から開いてください。</p>`;
+    }
   }
 
+  // ---------- Auth ----------
   function showAdmin() {
     loginView.classList.add('hidden');
     adminView.classList.remove('hidden');
-    loadReports();
+    loadedTabs.clear();
+    activateTab('reports');
   }
   function showLogin(message) {
     adminView.classList.add('hidden');
@@ -145,10 +338,8 @@
     showLogin();
   });
 
-  document.getElementById('reason-filter').addEventListener('change', renderList);
-
   // If already logged in as the owner (session persisted from a previous visit), skip straight
-  // to the report list instead of asking to log in again.
+  // to the admin view instead of asking to log in again.
   sb.auth.getSession().then(({ data }) => {
     const session = data && data.session;
     if (session && session.user && session.user.email === OWNER_EMAIL) showAdmin();

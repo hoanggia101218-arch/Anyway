@@ -1730,6 +1730,153 @@ function mountSkyDuel(container, { onScore, onHint }, config = {}) {
   };
 }
 
+// ---------- 19. Spirit Shop (アクション, 自作オリジナル) ----------
+// task86(調査主導開発): Poki/Yandex Gamesの人気タイトル調査(2026-08-19)で「Monkey Mart」
+// (お店を切り盛りするタップ経営ゲーム)がPoki上位に居続けていることが分かった。その核である
+// 「お客さんの注文を見て、正しい品を渡す」というタップ照合の面白さだけを抜き出し、絵柄は
+// コピーせず既存の10属性精霊(trapdojo.js/app.jsのSPIRIT_AVATARSと同じ色・アイコン)を
+// お客さん役にした自作オリジナルのスコアアタックとして実装(60秒、他ゲームと同じ
+// onScore/onHint/comboの共通基盤に乗せている)。
+const SPIRITSHOP_ELEMENTS = [
+  { id: 'blaze', color: '#e6551a', icon: '🔥' },
+  { id: 'aqua', color: '#0288d1', icon: '💧' },
+  { id: 'volt', color: '#e6a800', icon: '⚡' },
+  { id: 'gust', color: '#4c9a2a', icon: '🌪️' },
+  { id: 'terra', color: '#6b7a3c', icon: '🪨' },
+  { id: 'frost', color: '#3d94c2', icon: '❄️' },
+  { id: 'light', color: '#d9a53a', icon: '✨' },
+  { id: 'nox', color: '#4a2a80', icon: '🌑' },
+  { id: 'leaf', color: '#4f8a2c', icon: '🌿' },
+  { id: 'plasma', color: '#6a3fc0', icon: '🔮' },
+];
+function mountSpiritShop(container, { onScore, onHint }, config = {}) {
+  const patienceSec = config.patienceSec ?? 6;
+  const roundSec = 60;
+  const maxCustomers = 4;
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  onHint(gt('hint_spiritshop', '同じ色・マークの素材をタップしてお客さんの精霊に渡そう！なるべく多く、なるべく速く！'));
+
+  let stalls = [];
+  function layout() {
+    const w = canvas.width, h = canvas.height;
+    const cols = 5, rows = 2;
+    const size = Math.min(w / cols, h * 0.12) * 0.86;
+    const gapX = w / cols, gapY = size * 1.3;
+    const startY = h - rows * gapY - 16;
+    stalls = SPIRITSHOP_ELEMENTS.map((el, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      return { el, x: gapX * col + gapX / 2, y: startY + row * gapY + size / 2, r: size / 2 };
+    });
+  }
+
+  let customers, score, burst, t, spawnT, dead, deadT, served, missed, combo;
+  function reset() {
+    customers = []; score = 0; burst = []; t = 0; spawnT = 0;
+    dead = false; deadT = 0; served = 0; missed = 0; combo = makeCombo(1500);
+  }
+  layout();
+  reset();
+  const reportBest = makeBestTracker('spiritshop', onHint);
+
+  function spawnCustomer() {
+    if (customers.length >= maxCustomers) return;
+    const used = new Set(customers.map(c => c.slot));
+    let slot = 0;
+    while (used.has(slot) && slot < maxCustomers) slot++;
+    if (slot >= maxCustomers) return;
+    const el = SPIRITSHOP_ELEMENTS[Math.floor(Math.random() * SPIRITSHOP_ELEMENTS.length)];
+    const per = canvas.width / maxCustomers;
+    const patience = Math.max(3.2, patienceSec - t * 0.03);
+    customers.push({ el, slot, x: per * slot + per / 2, y: canvas.height * 0.24, patience, maxPatience: patience });
+  }
+
+  function serve(el) {
+    const idx = customers.findIndex(c => c.el.id === el.id);
+    if (idx === -1) { combo.miss(); return; }
+    const c = customers[idx];
+    customers.splice(idx, 1);
+    const streak = combo.hit(onHint);
+    score += 10 + Math.min(streak, 12) * 2;
+    served++;
+    onScore(score);
+    spawnBurst(burst, c.x, c.y, el.color, 14);
+  }
+
+  function pointerdown(e) {
+    if (dead) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left;
+    const y = (e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top;
+    for (const s of stalls) {
+      const dx = x - s.x, dy = y - s.y;
+      if (dx * dx + dy * dy <= s.r * s.r * 1.5) { serve(s.el); return; }
+    }
+  }
+  canvas.addEventListener('pointerdown', pointerdown);
+
+  const stop = loopRAF((dt) => {
+    if (dead) {
+      deadT += dt;
+      if (deadT > 2.2) reset();
+    } else {
+      t += dt;
+      if (t >= roundSec) {
+        dead = true; deadT = 0;
+        sfx.gameover(); reportBest(score);
+      } else {
+        spawnT += dt;
+        const spawnEvery = Math.max(0.7, 1.7 - t * 0.018);
+        if (spawnT > spawnEvery) { spawnT = 0; spawnCustomer(); }
+        for (let i = customers.length - 1; i >= 0; i--) {
+          const c = customers[i];
+          c.patience -= dt;
+          if (c.patience <= 0) { customers.splice(i, 1); missed++; combo.miss(); }
+        }
+      }
+    }
+
+    ctx.fillStyle = '#1c1030'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(10, 8, canvas.width - 20, 7);
+    ctx.fillStyle = '#ffd23f'; ctx.fillRect(10, 8, (canvas.width - 20) * Math.max(0, 1 - t / roundSec), 7);
+
+    for (const c of customers) {
+      ctx.beginPath(); ctx.arc(c.x, c.y, 24, 0, Math.PI * 2);
+      ctx.fillStyle = c.el.color; ctx.fill();
+      ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(c.el.icon, c.x, c.y);
+      const frac = Math.max(0, c.patience / c.maxPatience);
+      ctx.strokeStyle = frac > 0.3 ? '#7CFC90' : '#ff5a5a';
+      ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.arc(c.x, c.y, 30, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
+    }
+
+    for (const s of stalls) {
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.globalAlpha = 0.85; ctx.fillStyle = s.el.color; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.font = `${Math.max(12, s.r)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(s.el.icon, s.x, s.y);
+    }
+
+    drawBurst(ctx, burst, dt);
+
+    if (dead) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(gt('game_over', 'ゲームオーバー'), canvas.width / 2, canvas.height / 2 - 16);
+      ctx.font = '18px sans-serif';
+      ctx.fillText(`✅ ${served}  ⏱️ ${Math.floor(missed)}`, canvas.width / 2, canvas.height / 2 + 16);
+    }
+  });
+
+  return () => {
+    stop();
+    canvas.removeEventListener('pointerdown', pointerdown);
+    canvas.remove();
+  };
+}
+
 const GAME_DEFS = [
   { id: 'dodge', title: 'ブロック避け', genre: 'アクション', mount: mountDodge,
     params: [{ key: 'blockSpeed', label: 'ブロックの速さ', min: 120, max: 400, step: 20, default: 180 }] },
@@ -1772,6 +1919,10 @@ const GAME_DEFS = [
   // code that doesn't belong in this file. Same deferred-wrapper reasoning as royale/cup above.
   { id: 'trapdojo', title: 'トラップ道場', genre: 'アクション',
     mount: (container, cbs, config) => window.TrapDojo.mount(container, cbs, config) },
+  // task86: Monkey Mart(Poki上位常連)着想のタップ経営スコアアタック。既存10属性精霊を
+  // お客さん役にした自作オリジナル。SPIRITSHOP_ELEMENTS/mountSpiritShop定義は本ファイル上部。
+  { id: 'spiritshop', title: 'スピリット・ショップ', genre: 'アクション', mount: mountSpiritShop,
+    params: [{ key: 'patienceSec', label: 'お客さんの待ち時間(秒)', min: 3.5, max: 8, step: 0.5, default: 6 }] },
 ];
 
 window.GAME_DEFS = GAME_DEFS;
