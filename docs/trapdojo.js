@@ -305,7 +305,7 @@
   // not a 4-way plus-pad) ----------
   function makeSideControls(container, onState) {
     const bar = document.createElement('div');
-    bar.style.cssText = 'position:absolute;left:0;right:0;bottom:8px;display:flex;justify-content:space-between;padding:0 12px;pointer-events:none;z-index:5;';
+    bar.style.cssText = 'position:absolute;left:0;right:0;bottom:calc(86px + env(safe-area-inset-bottom));display:flex;justify-content:space-between;padding:0 12px;pointer-events:none;z-index:5;';
     function btn(label) {
       const b = document.createElement('button');
       b.textContent = label;
