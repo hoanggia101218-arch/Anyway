@@ -797,10 +797,11 @@ async function initFeed(user) {
     mount.innerHTML = '';
     const scoreBadge = card.querySelector('.score-badge');
     const hintEl = card.querySelector('.hint-text');
-    scoreBadge.textContent = 'スコア: 0';
+    const scoreLabel = window.I18N ? window.I18N.t('score_label') : 'スコア';
+    scoreBadge.textContent = `${scoreLabel}: 0`;
     hintEl.textContent = '';
     activeCleanup = def.mount(mount, {
-      onScore: (s) => { scoreBadge.textContent = `スコア: ${s}`; },
+      onScore: (s) => { scoreBadge.textContent = `${scoreLabel}: ${s}`; },
       onHint: (h) => { hintEl.textContent = h; setTimeout(() => { hintEl.textContent = ''; }, 3000); },
     }, meta.config);
   }
@@ -924,11 +925,11 @@ async function initFeed(user) {
     card.innerHTML = `
       <div class="game-mount"></div>
       <div class="overlay-top"><button class="search-btn">🔍</button><span class="tag">#${def.genre}</span></div>
-      <div class="score-badge">スコア: 0</div>
+      <div class="score-badge">${window.I18N ? window.I18N.t('score_label') : 'スコア'}: 0</div>
       <div class="hint-text"></div>
       <div class="overlay-bottom">
         <div class="title">${escapeHtml(customTitle || def.title)}</div>
-        <div class="creator">${creatorName ? `@${escapeHtml(creatorName)} ・ リミックス` : 'Anyway公式'}</div>
+        <div class="creator">${creatorName ? `@${escapeHtml(creatorName)} ・ リミックス` : (window.I18N ? window.I18N.t('official_creator') : 'Anyway公式')}</div>
       </div>
       <div class="side-actions">
         ${['aim', ...OPEN_DUEL_GAME_IDS].includes(def.id) ? `<div style="text-align:center;"><button class="duel-btn">⚔️</button></div>` : ''}

@@ -726,7 +726,7 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
   let bodies, score, dead, particles, dragging, activeTier, nextTier, activeX, dropTimer, overTimer, popText;
   function radiusFor(tier) { return Math.max(10, canvas.width * MERGE_FRUITS[tier].rf); }
   function pickTier() {
-    const maxTier = Math.min(2 + Math.floor(score / 40), 4);
+    const maxTier = Math.min(2 + Math.floor(score / 40), 5);
     const weights = [];
     for (let t = 0; t <= maxTier; t++) weights.push(Math.pow(0.62, t));
     const total = weights.reduce((a, b) => a + b, 0);
@@ -739,6 +739,7 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
     overTimer = 0; dropTimer = 0; popText = [];
     activeTier = pickTier(); nextTier = pickTier();
     activeX = canvas.width / 2;
+    onScore(score); // otherwise the score badge keeps showing the previous run's final score until the first merge
   }
   reset();
 
@@ -1948,6 +1949,161 @@ function mountSpiritShop(container, { onScore, onHint }, config = {}) {
   };
 }
 
+// ---------- 20. Runner (アクション, 自作オリジナル) ----------
+// task86(調査主導開発): Poki 2026年8月調査でSubway Surfers/Temple Run 2型の横スクロール
+// 障害物よけランナーが上位常連であることを確認。既存のdodge(縦に降ってくるブロックを左右に
+// 避ける)/mymaze(自作コース走行)とは異なる「一定速度で自動的に進み、ジャンプ/スライディング
+// で障害物を避ける」という核メカニクスだけを抽出し、絵柄・世界観は完全オリジナル(既存ゲーム
+// と同じダークトーンの背景+単色シルエットのプレイヤー)で実装。
+function mountRunner(container, { onScore, onHint }, config = {}) {
+  const obstacleSpeedStart = config.obstacleSpeedStart ?? 260;
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  onHint(gt('hint_runner', '上をタップでジャンプ、下をタップ(長押し)でスライディング！障害物をよけて走り抜けろ'));
+
+  const groundY = canvas.height - 130; // dodgeと同じ、下部ナビ/アクションボタンを避ける高さ
+  const px = canvas.width * 0.22, pw = 34;
+  const standH = 46, duckH = 26;
+  const gravity = 1900, jumpV = -620;
+
+  let py, pvy, ducking, jumping;
+  let obstacles, t, score, dead, spawnT, spawnEvery, burst, passedCount, combo;
+  const reportBest = makeBestTracker('runner', onHint);
+
+  function reset() {
+    py = groundY; pvy = 0; ducking = false; jumping = false;
+    obstacles = []; t = 0; score = 0; dead = false; spawnT = 0; spawnEvery = 1.3; burst = [];
+    passedCount = 0; combo = makeCombo(2000);
+  }
+  reset();
+
+  function doJump() {
+    if (dead) { reset(); return; }
+    if (!jumping && !ducking) { pvy = jumpV; jumping = true; sfx.note(660); }
+  }
+  function startDuck() {
+    if (dead) { reset(); return; }
+    if (!jumping) ducking = true;
+  }
+  function endDuck() { ducking = false; }
+
+  function pointerdown(e) {
+    const rect = canvas.getBoundingClientRect();
+    const y = (e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top;
+    if (y < canvas.height * 0.5) doJump(); else startDuck();
+  }
+  function pointerup() { endDuck(); }
+  canvas.addEventListener('pointerdown', pointerdown);
+  canvas.addEventListener('pointerup', pointerup);
+  canvas.addEventListener('pointercancel', pointerup);
+
+  function keydown(e) {
+    if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === ' ') doJump();
+    if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') startDuck();
+  }
+  function keyup(e) {
+    if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') endDuck();
+  }
+  window.addEventListener('keydown', keydown);
+  window.addEventListener('keyup', keyup);
+
+  function spawnObstacle() {
+    const speed = Math.min(560, obstacleSpeedStart + t * 9);
+    if (Math.random() < 0.42) {
+      // 頭上をふさぐバー — スライディングでくぐる
+      obstacles.push({ type: 'high', x: canvas.width + 30, w: 30, barH: 14, gapAboveGround: 34, speed, passed: false });
+    } else {
+      // 地面の障害物 — ジャンプで飛び越える
+      obstacles.push({ type: 'low', x: canvas.width + 30, w: 30, h: 40, speed, passed: false });
+    }
+  }
+
+  const stop = loopRAF((dt) => {
+    if (dead) {
+      t += dt;
+      if (t > 1.4) reset();
+    } else {
+      t += dt;
+      score = Math.floor(t * 10) + passedCount * 3;
+      onScore(score);
+
+      if (jumping) {
+        pvy += gravity * dt; py += pvy * dt;
+        if (py >= groundY) { py = groundY; pvy = 0; jumping = false; }
+      } else {
+        py = groundY;
+      }
+
+      spawnT += dt;
+      spawnEvery = Math.max(0.7, 1.3 - t * 0.012);
+      if (spawnT > spawnEvery) { spawnT = 0; spawnObstacle(); }
+
+      for (const o of obstacles) o.x -= o.speed * dt;
+      obstacles = obstacles.filter(o => o.x > -60);
+
+      const curH = ducking ? duckH : standH;
+      const playerTop = py - curH, playerBottom = py;
+
+      for (const o of obstacles) {
+        if (!o.passed && o.x + o.w < px - pw / 2) {
+          o.passed = true; passedCount++;
+          combo.hit(onHint);
+          spawnBurst(burst, px, groundY - curH / 2, '#7CFC90', 6);
+        }
+        const overlapX = o.x < px + pw / 2 && o.x + o.w > px - pw / 2;
+        if (overlapX) {
+          let hit = false;
+          if (o.type === 'low') {
+            if (playerBottom > groundY - o.h) hit = true;
+          } else {
+            const barBottom = groundY - o.gapAboveGround;
+            if (playerTop < barBottom) hit = true;
+          }
+          if (hit) {
+            dead = true; t = 0;
+            sfx.gameover(); flashEl(canvas); reportBest(score); combo.miss();
+          }
+        }
+      }
+    }
+
+    ctx.fillStyle = '#16241c'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, groundY + 2); ctx.lineTo(canvas.width, groundY + 2); ctx.stroke();
+
+    ctx.fillStyle = '#c65b2e';
+    for (const o of obstacles) {
+      if (o.type === 'low') {
+        ctx.fillRect(o.x, groundY - o.h, o.w, o.h);
+      } else {
+        const barBottom = groundY - o.gapAboveGround;
+        ctx.fillRect(o.x, barBottom - o.barH, o.w, o.barH);
+      }
+    }
+
+    const curH = ducking ? duckH : standH;
+    ctx.fillStyle = dead ? '#555' : '#4ea8ff';
+    ctx.fillRect(px - pw / 2, groundY - curH, pw, curH);
+
+    drawBurst(ctx, burst, dt);
+
+    if (dead) {
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(gt('restart_hint', 'タップでリスタート'), canvas.width / 2, canvas.height / 2);
+    }
+  });
+
+  return () => {
+    stop();
+    canvas.removeEventListener('pointerdown', pointerdown);
+    canvas.removeEventListener('pointerup', pointerup);
+    canvas.removeEventListener('pointercancel', pointerup);
+    window.removeEventListener('keydown', keydown);
+    window.removeEventListener('keyup', keyup);
+    canvas.remove();
+  };
+}
+
 const GAME_DEFS = [
   { id: 'dodge', title: 'ブロック避け', genre: 'アクション', mount: mountDodge,
     params: [{ key: 'blockSpeed', label: 'ブロックの速さ', min: 120, max: 400, step: 20, default: 180 }] },
@@ -1994,6 +2150,11 @@ const GAME_DEFS = [
   // お客さん役にした自作オリジナル。SPIRITSHOP_ELEMENTS/mountSpiritShop定義は本ファイル上部。
   { id: 'spiritshop', title: 'スピリット・ショップ', genre: 'アクション', mount: mountSpiritShop,
     params: [{ key: 'patienceSec', label: 'お客さんの待ち時間(秒)', min: 3.5, max: 8, step: 0.5, default: 6 }] },
+  // task86: Subway Surfers/Temple Run型(Poki上位常連)着想の横スクロール障害物よけ
+  // ランナー。ジャンプ/スライディングの核メカニクスだけを抽出した自作オリジナル。
+  // mountRunner定義は本ファイル上部。
+  { id: 'runner', title: '障害物よけランナー', genre: 'アクション', mount: mountRunner,
+    params: [{ key: 'obstacleSpeedStart', label: '障害物の速さ', min: 180, max: 360, step: 20, default: 260 }] },
 ];
 
 window.GAME_DEFS = GAME_DEFS;
