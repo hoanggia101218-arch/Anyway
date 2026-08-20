@@ -844,10 +844,24 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
     }
 
     ctx.fillStyle = '#1a2440'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.setLineDash([5, 5]);
+    // Danger telegraph: the over-line was a static faint dash regardless of how close a pile
+    // sat to triggering game over, so death always landed as a surprise with no warning beat.
+    // Now it reddens/pulses/fills in step with overTimer (0..1.1s) so a rising pile gives the
+    // player a fair, escalating signal before it's fatal.
+    const dangerT = Math.min(1, overTimer / 1.1);
+    const pulse = dangerT > 0.3 ? 0.6 + 0.4 * Math.sin(performance.now() / 110) : 1;
+    if (dangerT > 0) {
+      ctx.fillStyle = `rgba(255,60,60,${dangerT * 0.18 * pulse})`;
+      ctx.fillRect(wallX, 0, canvas.width - wallX * 2, overLineY);
+    }
+    ctx.strokeStyle = dangerT > 0
+      ? `rgba(255,${Math.round(90 - 70 * dangerT)},${Math.round(90 - 70 * dangerT)},${(0.35 + 0.5 * dangerT) * pulse})`
+      : 'rgba(255,255,255,0.15)';
+    ctx.setLineDash([5, 5]);
     ctx.beginPath(); ctx.moveTo(wallX, overLineY); ctx.lineTo(canvas.width - wallX, overLineY); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 3;
+    ctx.strokeStyle = dangerT > 0 ? `rgba(255,80,80,${(0.4 + 0.5 * dangerT) * pulse})` : 'rgba(255,255,255,0.4)';
+    ctx.lineWidth = 3;
     ctx.strokeRect(wallX, overLineY, canvas.width - wallX * 2, floorY - overLineY);
 
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1045,30 +1059,74 @@ function mountMyMaze(container, { onScore, onHint }, config = {}) {
 // a bigger one; touching the trail/a wall ends the run. Own design/implementation — not a copy
 // of any third-party game's code or art, just the same "cover the board without crossing
 // yourself" puzzle idea classic to grid-snake games.
+// task98 (2026-08-20): 3000 hand-generated, solver-verified levels (tier 1-40, Toshiba/PC-C,
+// see output_contrib/Toshiba/fillitall_levels/) loaded from fillitall_levels_data.js as a plain
+// <script> global (window.FILLITALL_LEVELS_RAW), not fetch() -- this file's own header promises
+// "No network calls... pure canvas/DOM + JS", and index.html loads via file:// as well as
+// http(s) where fetch() of a local file is CORS-blocked outright. Each entry is a compact tuple
+// [tier, difficultyCode, cols, rows, start, obstacles, cells] to keep the bundle small; expanded
+// once here into objects instead of decoding the tuple shape at every level start.
+const FILLITALL_LEVELS = (() => {
+  const raw = window.FILLITALL_LEVELS_RAW;
+  if (!Array.isArray(raw)) return null;
+  const names = window.FILLITALL_DIFFICULTY_NAMES || ['easy', 'normal', 'hard', 'expert', 'master'];
+  return raw.map(([tier, diffCode, cols, rows, start, obstacles, cells]) => ({
+    tier, difficulty: names[diffCode] || '?', cols, rows, start, obstacles, cells,
+  }));
+})();
+
 function mountFillItAll(container, { onScore, onHint }, config = {}) {
-  onHint(gt('hint_fillitall', '下のボタン(WASD/矢印キーもOK)で1マスずつ進み、部屋のマスを全部ぬろう。自分の跡に触れたら終了！'));
+  onHint(gt('hint_fillitall', '下のボタン(WASD/矢印キーもOK)で1マスずつ進み、部屋のマスを全部ぬろう。自分の跡に触れたら終了！自分の跡以外の壁マスは通れないよ'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
-  const cell = 26;
-  const cols = Math.max(4, Math.floor(canvas.width / cell));
-  const rows = Math.max(4, Math.floor(canvas.height / cell));
+  const BASE_CELL = 26, MIN_CELL = 12, MAX_CELL = 34, PAD = 4, HUD_H = 46;
+  // Fallback board size for the endless procedural mode once all 3000 curated levels are
+  // cleared -- unchanged from the original fixed-grid behavior.
+  const baseCols = Math.max(4, Math.floor(canvas.width / BASE_CELL));
+  const baseRows = Math.max(4, Math.floor(canvas.height / BASE_CELL));
   const reportBest = makeBestTracker('fillitall', onHint);
 
   let level = 1, filled, trail, head, score = 0, dead = false, particles = [], levelCells = 0, transitioning = false;
+  let curCols = baseCols, curRows = baseRows, cell = BASE_CELL, offsetX = 0, offsetY = HUD_H;
+  let obstacles = new Set(), curTier = null, curDifficulty = null;
 
   function levelSize() {
-    // Grows the covered target each level, capped at the full board so later levels stay
-    // beatable within the fixed canvas grid rather than needing an ever-bigger board.
-    return Math.min(cols * rows, 8 + level * 4);
+    // Grows the covered target each level, capped at the full board so later (procedural)
+    // levels stay beatable within the fixed canvas grid rather than needing an ever-bigger board.
+    return Math.min(curCols * curRows, 8 + level * 4);
+  }
+
+  function layoutBoard() {
+    cell = Math.max(MIN_CELL, Math.min(MAX_CELL, Math.floor(Math.min(
+      (canvas.width - PAD * 2) / curCols,
+      (canvas.height - HUD_H - PAD * 2) / curRows
+    ))));
+    offsetX = Math.floor((canvas.width - curCols * cell) / 2);
+    offsetY = HUD_H + Math.floor((canvas.height - HUD_H - curRows * cell) / 2);
   }
 
   function startLevel() {
     filled = new Set();
     trail = [];
-    levelCells = levelSize();
-    head = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
+    const data = FILLITALL_LEVELS;
+    if (data && level <= data.length) {
+      const lv = data[level - 1];
+      curCols = lv.cols; curRows = lv.rows;
+      obstacles = new Set(lv.obstacles.map(([x, y]) => y * curCols + x));
+      levelCells = lv.cells;
+      curTier = lv.tier; curDifficulty = lv.difficulty;
+      head = { x: lv.start[0], y: lv.start[1] };
+    } else {
+      // Endless mode: 3000 curated levels cleared, keep going with the original random growth.
+      curCols = baseCols; curRows = baseRows;
+      obstacles = new Set();
+      curTier = null; curDifficulty = null;
+      levelCells = levelSize();
+      head = { x: Math.floor(Math.random() * curCols), y: Math.floor(Math.random() * curRows) };
+    }
+    layoutBoard();
     trail.push(head);
-    filled.add(head.y * cols + head.x);
+    filled.add(head.y * curCols + head.x);
     dead = false;
   }
   startLevel();
@@ -1077,11 +1135,12 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
   function step(d) {
     if (dead || !d || transitioning) return;
     const nx = head.x + d.x, ny = head.y + d.y;
-    // Bumping the room's edge is just a blocked move (this is a bounded puzzle room, not a
-    // hazard) — only crossing your own trail actually ends the run, matching the original
-    // "尻尾が頭に追いつくとゲームオーバー" self-collision rule.
-    if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) { shakeEl(canvas); return; }
-    const idx = ny * cols + nx;
+    // Bumping the room's edge or a level's built-in obstacle wall is just a blocked move (this
+    // is a bounded puzzle room, not a hazard) — only crossing your own trail actually ends the
+    // run, matching the original "尻尾が頭に追いつくとゲームオーバー" self-collision rule.
+    if (nx < 0 || ny < 0 || nx >= curCols || ny >= curRows) { shakeEl(canvas); return; }
+    const idx = ny * curCols + nx;
+    if (obstacles.has(idx)) { shakeEl(canvas); return; }
     if (filled.has(idx)) {
       dead = true;
       sfx.gameover(); flashEl(canvas); shakeEl(canvas);
@@ -1093,7 +1152,7 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
     filled.add(idx);
     score++; onScore(score);
     reportBest(score);
-    spawnBurst(particles, nx * cell + cell / 2, ny * cell + cell / 2, '#31d158', 6);
+    spawnBurst(particles, offsetX + nx * cell + cell / 2, offsetY + ny * cell + cell / 2, '#31d158', 6);
     sfx.score(Math.min(3, level));
     if (filled.size >= levelCells) {
       sfx.win();
@@ -1123,19 +1182,31 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
   }
   canvas.addEventListener('pointerdown', tapCanvas);
 
+  const DIFF_COLOR = { easy: '#31d158', normal: '#3fa7ff', hard: '#ffd23f', expert: '#ff9f3f', master: '#ff5a5a' };
   const stop = loopRAF((dt) => {
     ctx.fillStyle = '#101418'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    for (let x = 0; x <= cols; x++) { ctx.beginPath(); ctx.moveTo(x * cell, 0); ctx.lineTo(x * cell, rows * cell); ctx.stroke(); }
-    for (let y = 0; y <= rows; y++) { ctx.beginPath(); ctx.moveTo(0, y * cell); ctx.lineTo(cols * cell, y * cell); ctx.stroke(); }
+    for (let x = 0; x <= curCols; x++) { ctx.beginPath(); ctx.moveTo(offsetX + x * cell, offsetY); ctx.lineTo(offsetX + x * cell, offsetY + curRows * cell); ctx.stroke(); }
+    for (let y = 0; y <= curRows; y++) { ctx.beginPath(); ctx.moveTo(offsetX, offsetY + y * cell); ctx.lineTo(offsetX + curCols * cell, offsetY + y * cell); ctx.stroke(); }
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    for (const idx of obstacles) {
+      const ox = idx % curCols, oy = (idx - ox) / curCols;
+      ctx.fillRect(offsetX + ox * cell + 1, offsetY + oy * cell + 1, cell - 2, cell - 2);
+    }
     ctx.fillStyle = '#3fa7ff';
-    for (const p of trail) ctx.fillRect(p.x * cell + 1, p.y * cell + 1, cell - 2, cell - 2);
+    for (const p of trail) ctx.fillRect(offsetX + p.x * cell + 1, offsetY + p.y * cell + 1, cell - 2, cell - 2);
     ctx.fillStyle = dead ? '#777' : '#ffd23f';
-    ctx.fillRect(head.x * cell + 1, head.y * cell + 1, cell - 2, cell - 2);
+    ctx.fillRect(offsetX + head.x * cell + 1, offsetY + head.y * cell + 1, cell - 2, cell - 2);
     drawBurst(ctx, particles, dt);
     ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText(`Lv.${level}  ${filled.size}/${levelCells}`, 8, 40);
+    ctx.fillText(`Lv.${level}  ${filled.size}/${levelCells}`, 8, 22);
+    if (curTier) {
+      ctx.fillStyle = DIFF_COLOR[curDifficulty] || '#fff';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText(`Tier ${curTier} ・ ${gt('diff_' + curDifficulty, curDifficulty)}`, 8, 40);
+    }
     if (dead) {
+      ctx.fillStyle = '#fff';
       ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(gt('restart_hint_button', 'タップ/ボタンでリスタート'), canvas.width / 2, canvas.height / 2);
     }
@@ -1866,7 +1937,7 @@ function mountSpiritShop(container, { onScore, onHint }, config = {}) {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(gt('game_over', 'ゲームオーバー'), canvas.width / 2, canvas.height / 2 - 16);
       ctx.font = '18px sans-serif';
-      ctx.fillText(`✅ ${served}  ⏱️ ${Math.floor(missed)}`, canvas.width / 2, canvas.height / 2 + 16);
+      ctx.fillText(`✅ ${served}  ❌ ${missed}`, canvas.width / 2, canvas.height / 2 + 16);
     }
   });
 
