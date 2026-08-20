@@ -1,0 +1,16 @@
+{
+  "name": "anyway-capacitor",
+  "version": "1.0.0",
+  "description": "Capacitor iOS/Android wrap of Anyway's output/ web app",
+  "private": true,
+  "dependencies": {
+    "@capacitor-community/admob": "^8.0.0",
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0",
+    "cordova-plugin-purchase": "^13.18.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.6.8"
+  }
+}

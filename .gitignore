@@ -1,0 +1,19 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# iOS
+ios/App/Pods/
+ios/App/build/
+ios/App/DerivedData/
+ios/**/*.xcuserstate
+ios/**/xcuserdata/
+ios/**/.DS_Store
+
+# Android
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/*.iml
+android/.idea/

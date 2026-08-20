@@ -1,0 +1,14 @@
+{
+  "appId": "com.anyway.app",
+  "appName": "Anyway",
+  "webDir": "www",
+  "server": {
+    "allowNavigation": [
+      "qmqmpfjgxgwmsdeqpbiu.supabase.co",
+      "cdn.jsdelivr.net"
+    ]
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}
