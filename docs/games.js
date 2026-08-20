@@ -776,8 +776,9 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
   canvas.addEventListener('pointerup', pointerup);
   canvas.addEventListener('pointercancel', pointerup);
 
-  function mergeAt(i, j) {
-    const a = bodies[i], b = bodies[j];
+  // Takes body OBJECT REFERENCES (not array indices) so it stays correct no matter what else
+  // has already been spliced out of `bodies` this pass -- see the pass loop below for why.
+  function mergeAt(a, b) {
     const newTier = a.tier + 1;
     const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     const combo_n = combo.hit(onHint);
@@ -792,8 +793,8 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
       popText.push({ x: mx, y: my, t: 0, text: `+${(newTier + 1) * 4}` });
       bodies.push({ x: mx, y: my, vx: 0, vy: -60, r: radiusFor(newTier), tier: newTier });
     }
-    bodies.splice(Math.max(i, j), 1);
-    bodies.splice(Math.min(i, j), 1);
+    bodies.splice(bodies.indexOf(a), 1);
+    bodies.splice(bodies.indexOf(b), 1);
     if (combo_n >= 2) flashEl(canvas, 90);
   }
 
@@ -832,7 +833,10 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
             }
           }
         }
-        if (merges.length) { merges.sort((m1, m2) => Math.max(...m2) - Math.max(...m1)); merges.forEach(([i, j]) => mergeAt(i, j)); }
+        // Resolve indices to object refs up front, before any splicing happens -- mergeAt()
+        // itself removes by reference, so once resolved these stay correct through the whole
+        // forEach even after an earlier merge in this pass has shrunk/reindexed `bodies`.
+        if (merges.length) { merges.map(([i, j]) => [bodies[i], bodies[j]]).forEach(([a, b]) => mergeAt(a, b)); }
         else break;
       }
 
@@ -883,6 +887,24 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
       ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.setLineDash([4, 6]);
       ctx.beginPath(); ctx.moveTo(activeX, dropY + r * 2); ctx.lineTo(activeX, floorY); ctx.stroke();
       ctx.setLineDash([]);
+
+      // Auto-drop telegraph: while undragged, the fruit used to fall on its own after
+      // autoDropAfter with zero warning -- a hidden timer, so idle players got surprised by a
+      // drop they never asked for. This ring fills in around the fruit as the timer approaches
+      // firing, and pulses orange in the last quarter, so the drop always has a visible cue first.
+      if (!dragging) {
+        const dropFrac = Math.min(1, dropTimer / autoDropAfter);
+        if (dropFrac > 0.05) {
+          const ringR = r + 7;
+          const urgent = dropFrac > 0.75;
+          const pulse = urgent ? 0.55 + 0.45 * Math.sin(performance.now() / 90) : 1;
+          ctx.strokeStyle = urgent ? `rgba(255,140,60,${0.55 + 0.4 * pulse})` : 'rgba(255,255,255,0.5)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(activeX, dropY + r, ringR, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * dropFrac);
+          ctx.stroke();
+        }
+      }
 
       // Card chrome (.overlay-top: search button + genre tag) sits at top:16px, right:16px,
       // reaching roughly to y=48 on screen -- drawing this canvas-native "NEXT" indicator at
@@ -2155,6 +2177,12 @@ const GAME_DEFS = [
   // mountRunner定義は本ファイル上部。
   { id: 'runner', title: '障害物よけランナー', genre: 'アクション', mount: mountRunner,
     params: [{ key: 'obstacleSpeedStart', label: '障害物の速さ', min: 180, max: 360, step: 20, default: 260 }] },
+  // 2026-08-20 DELL: 縦型フィード専用の新規3Dゲーム。回転するタワーのリングを縫って落ち続ける
+  // オリジナル降下ゲーム(genre-inspiredだがどの既存作品のコード・素材も再利用していない、
+  // 独自の10属性テーマ+ゲート/ハザード判定)。own file(spiral.js)なので royale/cup/trapdojo と
+  // 同じ理由でdeferred-wrapper(mount-call時にwindow.mountSpiralを解決、load順に依存しない)。
+  { id: 'spiral', title: 'エレメント・スパイラル', genre: 'アクション',
+    mount: (container, cbs, config) => window.mountSpiral(container, cbs, config) },
 ];
 
 window.GAME_DEFS = GAME_DEFS;
