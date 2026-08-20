@@ -253,7 +253,7 @@ function mountDodge(container, { onScore, onHint }, config = {}) {
       }
       for (const b of blocks) b.y += b.vy * dt;
       blocks = blocks.filter(b => b.y < canvas.height + 40);
-      const py = canvas.height - 70;
+      const py = canvas.height - 130; // stay clear of the app's bottom-nav + side-action buttons
       for (const b of blocks) {
         const dx = Math.abs(b.x - px), dy = Math.abs(b.y - py);
         if (dx < (b.s + pw) / 2 - 6 && dy < (b.s + ph) / 2 - 6) {
@@ -272,7 +272,7 @@ function mountDodge(container, { onScore, onHint }, config = {}) {
     ctx.fillStyle = '#ffb020';
     for (const b of blocks) ctx.fillRect(b.x - b.s / 2, b.y - b.s / 2, b.s, b.s);
     ctx.fillStyle = dead ? '#555' : '#4ea8ff';
-    ctx.fillRect(px - pw / 2, canvas.height - 70 - ph / 2, pw, ph);
+    ctx.fillRect(px - pw / 2, canvas.height - 130 - ph / 2, pw, ph);
     drawBurst(ctx, burst, dt);
     if (dead) {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
@@ -561,7 +561,7 @@ function mountStack(container, { onScore, onHint }, config = {}) {
   }
   reset();
 
-  function baseYFor(layerIdx) { return (canvas.height - 40) - (layerIdx * layerH) + camY; }
+  function baseYFor(layerIdx) { return (canvas.height - 130) - (layerIdx * layerH) + camY; } // stay clear of the app's bottom-nav
 
   function drop() {
     if (dead) { reset(); return; }
@@ -589,7 +589,7 @@ function mountStack(container, { onScore, onHint }, config = {}) {
       beep(420, 0.07, 'sine', 0.1);
       spawnBurst(particles, left + overlap / 2, hitY, '#8892b0', 5);
     }
-    const visibleLayers = Math.floor((canvas.height - 80) / layerH);
+    const visibleLayers = Math.floor((canvas.height - 170) / layerH);
     if (stack.length > visibleLayers) camY = (stack.length - visibleLayers) * layerH;
     spawnMoving();
   }
@@ -601,7 +601,7 @@ function mountStack(container, { onScore, onHint }, config = {}) {
       if (moving.x <= -moving.w || moving.x >= canvas.width) moving.dir *= -1;
     }
     ctx.fillStyle = '#141425'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const baseY = canvas.height - 40;
+    const baseY = canvas.height - 130;
     stack.forEach((b, i) => {
       const y = baseY - (i * layerH) + camY;
       if (y < -layerH || y > canvas.height) return;
@@ -717,7 +717,7 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
   const reportBest = makeBestTracker('merge', onHint);
   const combo = makeCombo(1200);
   const wallX = 10;
-  const floorY = canvas.height - 10;
+  const floorY = canvas.height - 130; // stay clear of the app's bottom-nav + side-action buttons
   const overLineY = canvas.height * 0.16;
   const dropY = canvas.height * 0.09;
   const autoDropAfter = config.autoDropAfter ?? 3.2;
@@ -749,7 +749,7 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
   function dropActive() {
     if (dead || !bodies) return;
     const r = radiusFor(activeTier);
-    bodies.push({ x: activeX, y: dropY + r, vx: 0, vy: 40, r, tier: activeTier, settle: 0 });
+    bodies.push({ x: activeX, y: dropY + r, vx: 0, vy: 40, r, tier: activeTier });
     activeTier = nextTier; nextTier = pickTier(); dropTimer = 0; clampActiveX();
   }
   function pointerX(e) {
@@ -789,7 +789,7 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
       score += (newTier + 1) * 4; onScore(score); reportBest(score);
       spawnBurst(particles, mx, my, MERGE_FRUITS[newTier].color, 10 + newTier * 2);
       popText.push({ x: mx, y: my, t: 0, text: `+${(newTier + 1) * 4}` });
-      bodies.push({ x: mx, y: my, vx: 0, vy: -60, r: radiusFor(newTier), tier: newTier, settle: 0 });
+      bodies.push({ x: mx, y: my, vx: 0, vy: -60, r: radiusFor(newTier), tier: newTier });
     }
     bodies.splice(Math.max(i, j), 1);
     bodies.splice(Math.min(i, j), 1);
@@ -836,7 +836,7 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
       }
 
       let overNow = false;
-      for (const bd of bodies) { if (bd.settle !== undefined && bd.y - bd.r < overLineY && Math.abs(bd.vy) < 40) overNow = true; }
+      for (const bd of bodies) { if (bd.y - bd.r < overLineY && Math.abs(bd.vy) < 40) overNow = true; }
       overTimer = overNow ? overTimer + dt : Math.max(0, overTimer - dt * 2);
       if (overTimer > 1.1) {
         dead = true; sfx.gameover(); flashEl(canvas); reportBest(score);
