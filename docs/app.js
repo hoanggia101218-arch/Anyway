@@ -9,7 +9,7 @@ const WEIGHTS_KEY = 'anyway_weights_';
 
 function hashCode(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h << 5) - h + s.charCodeAt(i) | 0; return h; }
 
-const PASSWORD_HINT = 'パスワードは6文字以上で、大文字・小文字・数字をそれぞれ1文字以上含めてください';
+function getPasswordHint() { return window.I18N ? window.I18N.t('auth_password_hint') : 'パスワードは6文字以上で、大文字・小文字・数字をそれぞれ1文字以上含めてください'; }
 function isPasswordValid(pw) { return pw.length >= 6 && /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /[0-9]/.test(pw); }
 function isValidHandle(h) { return /^[a-zA-Z0-9_]{3,20}$/.test(h); }
 
@@ -422,7 +422,7 @@ function showResetPasswordForm() {
   async function submit() {
     errorEl.classList.add('hidden');
     const pw = document.getElementById('new-password-input').value;
-    if (!isPasswordValid(pw)) { errorEl.textContent = PASSWORD_HINT; errorEl.classList.remove('hidden'); return; }
+    if (!isPasswordValid(pw)) { errorEl.textContent = getPasswordHint(); errorEl.classList.remove('hidden'); return; }
     const { error } = await sb.auth.updateUser({ password: pw });
     if (error) { errorEl.textContent = error.message; errorEl.classList.remove('hidden'); return; }
     history.replaceState(null, '', location.pathname);
@@ -471,23 +471,24 @@ function showAuthModal(onReady) {
   document.getElementById('forgot-password-link').addEventListener('click', (e) => { e.preventDefault(); clearError(); showOnly(resetRequestForm); });
   document.getElementById('back-to-login-from-reset').addEventListener('click', (e) => { e.preventDefault(); clearError(); showOnly(loginForm); });
 
+  const t55auth = window.I18N ? window.I18N.t : (k) => k;
   async function signup() {
     clearError();
     const name = document.getElementById('username-input').value.trim();
     const handle = document.getElementById('userid-input').value.trim().replace(/^@/, '');
     const email = document.getElementById('email-input').value.trim().toLowerCase();
     const password = document.getElementById('password-input').value;
-    if (!name) return showError('ユーザー名を入力してください');
-    if (!isValidHandle(handle)) return showError('ユーザーIDは半角英数字とアンダースコアのみ、3〜20文字で入力してください');
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showError('正しいメールアドレスを入力してください');
-    if (!isPasswordValid(password)) return showError(PASSWORD_HINT);
+    if (!name) return showError(t55auth('auth_username_required'));
+    if (!isValidHandle(handle)) return showError(t55auth('profile_set_handle_error_format'));
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showError(t55auth('auth_email_invalid'));
+    if (!isPasswordValid(password)) return showError(getPasswordHint());
     const birthDate = birthdateInput.value;
-    if (!birthDate) return showError('生年月日を入力してください');
+    if (!birthDate) return showError(t55auth('auth_birthdate_required'));
     const age = computeAge(birthDate);
-    if (age < 0 || age > 120) return showError('生年月日を正しく入力してください');
+    if (age < 0 || age > 120) return showError(t55auth('auth_birthdate_invalid'));
     const isMinor = age < 13;
     const { data: existingHandle } = await sb.from('profiles').select('id').ilike('handle', handle).maybeSingle();
-    if (existingHandle) return showError('このユーザーIDは既に使われています');
+    if (existingHandle) return showError(t55auth('profile_set_handle_error_taken'));
     const color = `hsl(${Math.abs(hashCode(name)) % 360}, 65%, 55%)`;
     // birth_date/is_minor go into Supabase Auth's user_metadata (no profiles table
     // schema change needed — this deploys immediately without a DB migration step).
@@ -499,7 +500,7 @@ function showAuthModal(onReady) {
     const { data, error } = await sb.auth.signUp({ email, password, options: { data: { username: name, color, handle, birth_date: birthDate, is_minor: isMinor } } });
     if (error) return showError(error.message);
     if (!data.session) {
-      showError('確認メールを送信しました。メール内のリンクを開いてからログインしてください。');
+      showError(t55auth('auth_email_confirmation_sent'));
       return;
     }
     modal.classList.add('hidden');
@@ -511,7 +512,7 @@ function showAuthModal(onReady) {
     const email = document.getElementById('login-email-input').value.trim().toLowerCase();
     const password = document.getElementById('login-password-input').value;
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
-    if (error) return showError('メールアドレスまたはパスワードが違います');
+    if (error) return showError(t55auth('auth_login_failed'));
     const profile = await fetchProfile(data.user.id);
     modal.classList.add('hidden');
     // Accounts created before this age-gate feature existed have no is_minor in their
@@ -528,10 +529,10 @@ function showAuthModal(onReady) {
   async function requestReset() {
     clearError();
     const email = document.getElementById('reset-email-input').value.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showError('正しいメールアドレスを入力してください');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showError(t55auth('auth_email_invalid'));
     const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
     if (error) return showError(error.message);
-    showError('再設定用のメールを送信しました。メール内のリンクを開いてください。');
+    showError(t55auth('auth_reset_email_sent'));
   }
 
   document.getElementById('start-btn').addEventListener('click', signup);
@@ -542,7 +543,7 @@ function showAuthModal(onReady) {
   document.getElementById('guest-btn').addEventListener('click', (e) => {
     e.preventDefault();
     modal.classList.add('hidden');
-    onReady({ id: null, email: null, name: 'ゲスト', handle: null, color: '#888888', isGuest: true, coins: 0 });
+    onReady({ id: null, email: null, name: t55auth('guest_display_name'), handle: null, color: '#888888', isGuest: true, coins: 0 });
   });
 }
 
@@ -707,7 +708,8 @@ async function initFeed(user) {
     followingCount = followingSet.size;
     if (btn) {
       const nowFollowing = followingSet.has(otherId);
-      btn.textContent = nowFollowing ? 'フォロー中' : 'フォローする';
+      const t55f = window.I18N ? window.I18N.t : (k) => ({ follow_btn_follow: 'フォローする', follow_btn_following: 'フォロー中' }[k] || k);
+      btn.textContent = nowFollowing ? t55f('follow_btn_following') : t55f('follow_btn_follow');
       btn.classList.toggle('following', nowFollowing);
     }
   }
@@ -729,10 +731,10 @@ async function initFeed(user) {
     }
   }
   const REPORT_REASONS = [
-    { key: 'danger', label: '危険な勧誘(個人情報・出会いなど)' },
-    { key: 'harassment', label: '嫌がらせ・誹謗中傷' },
-    { key: 'spam', label: 'スパム・迷惑行為' },
-    { key: 'other', label: 'その他' },
+    { key: 'danger', labelKey: 'report_reason_danger' },
+    { key: 'harassment', labelKey: 'report_reason_harassment' },
+    { key: 'spam', labelKey: 'report_reason_spam' },
+    { key: 'other', labelKey: 'report_reason_other' },
   ];
   async function submitReport(otherId, reason, detail) {
     await sb.from('reports').insert({ reporter_id: user.id, reported_user_id: otherId, reason, detail: detail || null });
@@ -840,6 +842,7 @@ async function initFeed(user) {
   // now threads creatorId through from every call site (own posts, search results,
   // freshly-posted remixes) — see cardMeta.
   function showMoreMenu(card, def) {
+    const t55m = window.I18N ? window.I18N.t : (k) => k;
     const meta = cardMeta.get(card) || {};
     const creatorId = meta.creatorId;
     const isOwnPost = creatorId && user.id && creatorId === user.id;
@@ -847,13 +850,13 @@ async function initFeed(user) {
     overlay.className = 'more-menu-overlay';
 
     function renderMainMenu() {
-      const blockLabel = creatorId && blockedByMe.has(creatorId) ? '✅ ブロックを解除する' : '🚫 投稿者をブロックする';
+      const blockLabel = creatorId && blockedByMe.has(creatorId) ? t55m('card_menu_unblock') : t55m('card_menu_block');
       overlay.innerHTML = `
         <div class="more-menu-box">
-          <button class="more-menu-item" id="more-menu-not-interested">🙅 興味なし(このジャンルを減らす)</button>
-          <button class="more-menu-item" id="more-menu-bug">🐛 バグ・問題を報告する</button>
-          ${(creatorId && !isOwnPost) ? `<button class="more-menu-item" id="more-menu-block">${blockLabel}</button>` : ''}
-          <button class="more-menu-item" id="more-menu-cancel">閉じる</button>
+          <button class="more-menu-item" id="more-menu-not-interested">${escapeHtml(t55m('card_menu_not_interested'))}</button>
+          <button class="more-menu-item" id="more-menu-bug">${escapeHtml(t55m('card_menu_report_bug'))}</button>
+          ${(creatorId && !isOwnPost) ? `<button class="more-menu-item" id="more-menu-block">${escapeHtml(blockLabel)}</button>` : ''}
+          <button class="more-menu-item" id="more-menu-cancel">${escapeHtml(t55m('card_menu_close'))}</button>
         </div>
       `;
       overlay.querySelector('#more-menu-cancel').addEventListener('click', () => overlay.remove());
@@ -861,16 +864,16 @@ async function initFeed(user) {
         weights[def.genre] = Math.max(0.2, (weights[def.genre] || 1) - 4);
         setWeights(user, weights);
         overlay.remove();
-        showCardHint(card, `「${def.genre}」の表示を減らしました`);
+        showCardHint(card, t55m('card_hint_genre_reduced').replace('{genre}', def.genre));
       });
       overlay.querySelector('#more-menu-bug').addEventListener('click', renderBugForm);
       const blockBtn = overlay.querySelector('#more-menu-block');
       if (blockBtn) {
         blockBtn.addEventListener('click', async () => {
-          if (user.isGuest) { overlay.remove(); showCardHint(card, 'ログインが必要です'); return; }
+          if (user.isGuest) { overlay.remove(); showCardHint(card, t55m('card_hint_login_required')); return; }
           await toggleBlock(creatorId);
           overlay.remove();
-          showCardHint(card, blockedByMe.has(creatorId) ? '投稿者をブロックしました' : 'ブロックを解除しました');
+          showCardHint(card, blockedByMe.has(creatorId) ? t55m('card_hint_blocked') : t55m('card_hint_unblocked'));
         });
       }
     }
@@ -878,21 +881,21 @@ async function initFeed(user) {
     function renderBugForm() {
       overlay.innerHTML = `
         <div class="more-menu-box" style="padding:16px;">
-          <p class="panel-note small" style="margin-bottom:8px;">「${escapeHtml(def.title)}」についてのバグ・問題を教えてください</p>
-          <textarea id="bug-report-text" class="create-title-input" rows="3" maxlength="500" style="width:100%;resize:vertical;box-sizing:border-box;" placeholder="例: スコアが正しく表示されない、操作が反応しない、など"></textarea>
+          <p class="panel-note small" style="margin-bottom:8px;">${escapeHtml(t55m('bug_report_prompt').replace('{title}', def.title))}</p>
+          <textarea id="bug-report-text" class="create-title-input" rows="3" maxlength="500" style="width:100%;resize:vertical;box-sizing:border-box;" placeholder="${escapeHtml(t55m('bug_report_placeholder'))}"></textarea>
           <p class="error hidden" id="bug-report-error" style="margin-top:6px;"></p>
           <div style="display:flex;gap:8px;margin-top:10px;">
-            <button class="post-btn" id="bug-report-submit" style="flex:1;">送信する</button>
-            <button class="more-menu-item" id="bug-report-cancel" style="flex:0 0 auto;width:auto;padding:0 16px;border:none;border-radius:12px;background:rgba(255,255,255,0.1);">戻る</button>
+            <button class="post-btn" id="bug-report-submit" style="flex:1;">${escapeHtml(t55m('bug_report_submit_btn'))}</button>
+            <button class="more-menu-item" id="bug-report-cancel" style="flex:0 0 auto;width:auto;padding:0 16px;border:none;border-radius:12px;background:rgba(255,255,255,0.1);">${escapeHtml(t55m('bug_report_back_btn'))}</button>
           </div>
         </div>
       `;
       overlay.querySelector('#bug-report-cancel').addEventListener('click', renderMainMenu);
       overlay.querySelector('#bug-report-submit').addEventListener('click', async () => {
-        if (user.isGuest) { overlay.remove(); showCardHint(card, 'ログインが必要です'); return; }
+        if (user.isGuest) { overlay.remove(); showCardHint(card, t55m('card_hint_login_required')); return; }
         const text = overlay.querySelector('#bug-report-text').value.trim();
         const errorEl = overlay.querySelector('#bug-report-error');
-        if (!text) { errorEl.textContent = '内容を入力してください'; errorEl.classList.remove('hidden'); return; }
+        if (!text) { errorEl.textContent = t55m('bug_report_error_empty'); errorEl.classList.remove('hidden'); return; }
         const submitBtn = overlay.querySelector('#bug-report-submit');
         submitBtn.disabled = true;
         // reports.reported_user_id models "report this person" — a bug report about a
@@ -906,9 +909,9 @@ async function initFeed(user) {
           detail: `[ゲーム: ${def.title} / ${def.id}] ${text}`,
         });
         submitBtn.disabled = false;
-        if (error) { errorEl.textContent = '送信に失敗しました。もう一度お試しください'; errorEl.classList.remove('hidden'); return; }
+        if (error) { errorEl.textContent = t55m('bug_report_error_failed'); errorEl.classList.remove('hidden'); return; }
         overlay.remove();
-        showCardHint(card, 'ご報告ありがとうございます');
+        showCardHint(card, t55m('bug_report_thanks'));
       });
     }
 
@@ -918,6 +921,7 @@ async function initFeed(user) {
   }
 
   function createCard(def, config = {}, creatorName = null, customTitle = null, creatorId = null, postId = null) {
+    const t55cc2 = window.I18N ? window.I18N.t : (k) => k;
     const card = document.createElement('div');
     card.className = 'card';
     card.dataset.gameId = def.id;
@@ -959,7 +963,7 @@ async function initFeed(user) {
     const duelBtn = card.querySelector('.duel-btn');
     if (duelBtn) {
       duelBtn.addEventListener('click', () => {
-        if (user.isGuest) return showCardHint(card, '対戦するにはログインしてください');
+        if (user.isGuest) return showCardHint(card, t55cc2('card_duel_login_required'));
         window.DuelSystem.startOpenDuel(sb, def.id, user);
       });
     }
@@ -967,14 +971,14 @@ async function initFeed(user) {
     const friendDuelBtn = card.querySelector('.friend-duel-btn');
     if (friendDuelBtn) {
       friendDuelBtn.addEventListener('click', () => {
-        if (user.isGuest) return showCardHint(card, '対戦するにはログインしてください');
+        if (user.isGuest) return showCardHint(card, t55cc2('card_duel_login_required'));
         window.DuelSystem.openFriendPicker(sb, def.id, def.title, user, getFriendProfiles());
       });
     }
 
     card.querySelector('.like-btn').addEventListener('click', async () => {
-      if (user.isGuest) return showCardHint(card, 'いいねするにはログインしてください');
-      if (user.isMinor) return showCardHint(card, '13歳未満の方はこの機能をご利用いただけません');
+      if (user.isGuest) return showCardHint(card, t55cc2('card_like_login_required'));
+      if (user.isMinor) return showCardHint(card, t55cc2('club_minor_restricted'));
       const turningOn = !liked.has(def.id);
       if (turningOn) {
         liked.add(def.id);
@@ -992,8 +996,8 @@ async function initFeed(user) {
     });
 
     card.querySelector('.repost-btn').addEventListener('click', async () => {
-      if (user.isGuest) return showCardHint(card, 'リポストするにはログインしてください');
-      if (user.isMinor) return showCardHint(card, '13歳未満の方はこの機能をご利用いただけません');
+      if (user.isGuest) return showCardHint(card, t55cc2('card_repost_login_required'));
+      if (user.isMinor) return showCardHint(card, t55cc2('club_minor_restricted'));
       const turningOn = !reposted.has(def.id);
       if (turningOn) { reposted.add(def.id); repostCounts[def.id] = (repostCounts[def.id] || 0) + 1; }
       else { reposted.delete(def.id); repostCounts[def.id] = Math.max(0, (repostCounts[def.id] || 0) - 1); }
@@ -1003,7 +1007,7 @@ async function initFeed(user) {
     });
 
     card.querySelector('.share-btn').addEventListener('click', async () => {
-      if (user.isGuest) return showCardHint(card, 'シェアするにはログインしてください');
+      if (user.isGuest) return showCardHint(card, t55cc2('card_share_login_required'));
       shareCounts[def.id] = (shareCounts[def.id] || 0) + 1;
       document.querySelectorAll(`.card[data-game-id="${def.id}"] .share-count`).forEach((el) => { el.textContent = shareCounts[def.id]; });
       if (navigator.share) {
@@ -1078,7 +1082,7 @@ async function initFeed(user) {
     // Age-gate (task 30 / legal/terms_of_service_ja.md 第2条): posting and DMs are
     // social/contact-risk features restricted to 13+. Club join/create is gated
     // separately inside the club panel itself, since that flow has its own UI states.
-    if (user.isMinor && (tab === 'create' || tab === 'dm')) { alert('13歳未満の方はこの機能をご利用いただけません'); return; }
+    if (user.isMinor && (tab === 'create' || tab === 'dm')) { alert(window.I18N ? window.I18N.t('club_minor_restricted') : '13歳未満の方はこの機能をご利用いただけません'); return; }
     if (tab !== 'dm') closeChatChannel();
     navBtns.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
     Object.entries(panels).forEach(([name, el]) => el.classList.toggle('hidden', name !== tab));
@@ -1541,7 +1545,7 @@ async function initFeed(user) {
     const t55c = window.I18N ? window.I18N.t : (k) => k;
     document.getElementById('club-panel-title').textContent = t55c('club_panel_title');
     const body = document.getElementById('club-panel-body');
-    body.innerHTML = '<p class="panel-note small">読み込み中...</p>';
+    body.innerHTML = `<p class="panel-note small">${escapeHtml(t55c('loading_text'))}</p>`;
     await fetchMyClub();
 
     let html = '';
@@ -1593,36 +1597,40 @@ async function initFeed(user) {
 
   function renderCreateClubForm() {
     clubPanelView = 'create';
-    document.getElementById('club-panel-title').textContent = 'クラブを作成';
+    const t55cc = window.I18N ? window.I18N.t : (k) => k;
+    document.getElementById('club-panel-title').textContent = t55cc('club_create_panel_title');
     const body = document.getElementById('club-panel-body');
     const eligibleByFollowers = followerCount >= CLUB_FOUND_MIN_FOLLOWERS;
     const eligibleByCoins = (user.coins || 0) >= CLUB_FOUND_COST_COINS;
+    const clearedSuffix = t55cc('club_cleared_suffix');
     body.innerHTML = `
-      <button class="back-link" id="back-to-club-list">← クラブ一覧に戻る</button>
-      <p class="panel-note small">設立条件: フォロワー${CLUB_FOUND_MIN_FOLLOWERS}人以上、またはコイン${CLUB_FOUND_COST_COINS}枚のいずれか</p>
-      <p class="panel-note small">あなたの状況: フォロワー${followerCount}人${eligibleByFollowers ? '(クリア)' : ''} ・ コイン${user.coins || 0}枚${eligibleByCoins ? '(クリア)' : ''}</p>
+      <button class="back-link" id="back-to-club-list">${escapeHtml(t55cc('club_back_to_list'))}</button>
+      <p class="panel-note small">${escapeHtml(t55cc('club_found_condition').replace('{followers}', CLUB_FOUND_MIN_FOLLOWERS).replace('{coins}', CLUB_FOUND_COST_COINS))}</p>
+      <p class="panel-note small">${escapeHtml(t55cc('club_your_status')
+        .replace('{followers}', followerCount).replace('{followersCleared}', eligibleByFollowers ? clearedSuffix : '')
+        .replace('{coins}', user.coins || 0).replace('{coinsCleared}', eligibleByCoins ? clearedSuffix : ''))}</p>
       <div class="param-row">
-        <label>クラブ名</label>
+        <label>${escapeHtml(t55cc('club_name_label'))}</label>
         <input type="text" id="club-name-input" class="create-title-input" maxlength="24">
       </div>
       <div class="param-row">
-        <label>説明</label>
+        <label>${escapeHtml(t55cc('club_desc_label'))}</label>
         <input type="text" id="club-desc-input" class="create-title-input" maxlength="80">
       </div>
       <div class="param-row">
-        <label>参加方法</label>
+        <label>${escapeHtml(t55cc('club_join_method_label'))}</label>
         <div class="choice-grid" id="club-policy-grid">
-          <button type="button" class="reason-item selected" data-policy="open">誰でも参加OK</button>
-          <button type="button" class="reason-item" data-policy="followers_required">フォロワー条件あり</button>
-          <button type="button" class="reason-item" data-policy="review">審査制</button>
+          <button type="button" class="reason-item selected" data-policy="open">${escapeHtml(t55cc('club_policy_open'))}</button>
+          <button type="button" class="reason-item" data-policy="followers_required">${escapeHtml(t55cc('club_policy_followers_required'))}</button>
+          <button type="button" class="reason-item" data-policy="review">${escapeHtml(t55cc('club_policy_review'))}</button>
         </div>
       </div>
       <div class="param-row hidden" id="club-min-followers-row">
-        <label>参加に必要なフォロワー数</label>
+        <label>${escapeHtml(t55cc('club_min_followers_label'))}</label>
         <input type="number" id="club-min-followers-input" class="create-title-input" value="10" min="0">
       </div>
       <p class="error hidden" id="create-club-error"></p>
-      <button class="post-btn" id="submit-create-club-btn" ${(!eligibleByFollowers && !eligibleByCoins) ? 'disabled' : ''}>作成する</button>
+      <button class="post-btn" id="submit-create-club-btn" ${(!eligibleByFollowers && !eligibleByCoins) ? 'disabled' : ''}>${escapeHtml(t55cc('club_create_submit_btn'))}</button>
     `;
     document.getElementById('back-to-club-list').addEventListener('click', renderClubPanel);
     let selectedPolicy = 'open';
@@ -1636,19 +1644,19 @@ async function initFeed(user) {
     document.getElementById('submit-create-club-btn').addEventListener('click', async () => {
       const errorEl = document.getElementById('create-club-error');
       errorEl.classList.add('hidden');
-      if (user.isMinor) { errorEl.textContent = '13歳未満の方はこの機能をご利用いただけません'; errorEl.classList.remove('hidden'); return; }
+      if (user.isMinor) { errorEl.textContent = t55cc('club_minor_restricted'); errorEl.classList.remove('hidden'); return; }
       const name = document.getElementById('club-name-input').value.trim();
       const description = document.getElementById('club-desc-input').value.trim();
       const minFollowers = selectedPolicy === 'followers_required' ? (Number(document.getElementById('club-min-followers-input').value) || 0) : 0;
-      if (!name) { errorEl.textContent = 'クラブ名を入力してください'; errorEl.classList.remove('hidden'); return; }
-      if (myClub) { errorEl.textContent = 'すでに別のクラブに所属しています。先に脱退してください。'; errorEl.classList.remove('hidden'); return; }
-      if (!eligibleByFollowers && !eligibleByCoins) { errorEl.textContent = '設立条件を満たしていません'; errorEl.classList.remove('hidden'); return; }
+      if (!name) { errorEl.textContent = t55cc('club_name_required'); errorEl.classList.remove('hidden'); return; }
+      if (myClub) { errorEl.textContent = t55cc('club_already_member'); errorEl.classList.remove('hidden'); return; }
+      if (!eligibleByFollowers && !eligibleByCoins) { errorEl.textContent = t55cc('club_condition_not_met'); errorEl.classList.remove('hidden'); return; }
       const costCoins = eligibleByFollowers ? 0 : CLUB_FOUND_COST_COINS;
       const { data, error } = await sb.from('clubs')
         .insert({ name, description: description || null, founder_id: user.id, join_policy: selectedPolicy, min_followers: minFollowers })
         .select().single();
       if (error) {
-        errorEl.textContent = error.code === '23505' ? 'そのクラブ名は既に使われています' : error.message;
+        errorEl.textContent = error.code === '23505' ? t55cc('club_name_taken') : error.message;
         errorEl.classList.remove('hidden');
         return;
       }
@@ -1667,13 +1675,14 @@ async function initFeed(user) {
   async function renderClubDetail(clubId) {
     clubPanelView = 'detail';
     clubPanelClubId = clubId;
+    const t55cd = window.I18N ? window.I18N.t : (k) => k;
     const body = document.getElementById('club-panel-body');
-    body.innerHTML = '<p class="panel-note small">読み込み中...</p>';
+    body.innerHTML = `<p class="panel-note small">${escapeHtml(t55cd('loading_text'))}</p>`;
     const [{ data: club }, { data: members }] = await Promise.all([
       sb.from('clubs').select('*').eq('id', clubId).single(),
       sb.from('club_members').select('user_id, role').eq('club_id', clubId),
     ]);
-    if (!club) { body.innerHTML = '<p class="panel-note small">クラブが見つかりませんでした</p>'; return; }
+    if (!club) { body.innerHTML = `<p class="panel-note small">${escapeHtml(t55cd('club_not_found'))}</p>`; return; }
     document.getElementById('club-panel-title').textContent = club.name;
     const isOwner = club.founder_id === user.id;
     const isMember = (members || []).some((m) => m.user_id === user.id);
@@ -1686,50 +1695,50 @@ async function initFeed(user) {
     }
 
     const policyLabel = {
-      open: '誰でも参加OK', followers_required: `フォロワー${club.min_followers}人以上が必要`, review: '審査制',
+      open: t55cd('club_policy_open'), followers_required: t55cd('club_policy_followers_required_detail').replace('{n}', club.min_followers), review: t55cd('club_policy_review'),
     }[club.join_policy] || club.join_policy;
 
     let actionHtml = '';
     if (isMember) {
       actionHtml = isOwner
-        ? '<p class="panel-note small">あなたはこのクラブのオーナーです。</p>'
-        : '<button class="post-btn leave-btn" id="leave-club-btn">クラブを脱退する</button>';
+        ? `<p class="panel-note small">${escapeHtml(t55cd('club_you_are_owner'))}</p>`
+        : `<button class="post-btn leave-btn" id="leave-club-btn">${escapeHtml(t55cd('club_leave_btn'))}</button>`;
     } else if (myClub) {
-      actionHtml = '<p class="panel-note small">別のクラブに所属中のため参加できません。先に脱退してください。</p>';
+      actionHtml = `<p class="panel-note small">${escapeHtml(t55cd('club_other_club_notice'))}</p>`;
     } else if (club.join_policy === 'review') {
-      actionHtml = '<button class="post-btn" id="apply-club-btn">参加を申請する</button><p class="panel-note small hidden" id="apply-done-msg">申請しました。オーナーの承認をお待ちください。</p>';
+      actionHtml = `<button class="post-btn" id="apply-club-btn">${escapeHtml(t55cd('club_apply_btn'))}</button><p class="panel-note small hidden" id="apply-done-msg">${escapeHtml(t55cd('club_apply_done_msg'))}</p>`;
     } else {
-      actionHtml = '<button class="post-btn" id="join-club-btn">参加する</button><p class="error hidden" id="join-club-error"></p>';
+      actionHtml = `<button class="post-btn" id="join-club-btn">${escapeHtml(t55cd('join_btn_label'))}</button><p class="error hidden" id="join-club-error"></p>`;
     }
 
     body.innerHTML = `
-      <button class="back-link" id="back-to-club-list">← クラブ一覧に戻る</button>
+      <button class="back-link" id="back-to-club-list">${escapeHtml(t55cd('club_back_to_list'))}</button>
       <p class="panel-note">${escapeHtml(club.description || '')}</p>
-      <p class="panel-note small">参加条件: ${escapeHtml(policyLabel)}</p>
-      <p class="panel-note small">メンバー数: ${members ? members.length : 0}</p>
+      <p class="panel-note small">${escapeHtml(t55cd('club_join_condition_label').replace('{label}', policyLabel))}</p>
+      <p class="panel-note small">${escapeHtml(t55cd('club_member_count_label').replace('{n}', members ? members.length : 0))}</p>
       ${actionHtml}
-      ${isOwner ? '<button class="post-btn" id="manage-applications-btn" style="margin-top:10px;">参加申請を確認する</button>' : ''}
-      <p class="panel-note" style="margin-top:20px;">メンバー</p>
+      ${isOwner ? `<button class="post-btn" id="manage-applications-btn" style="margin-top:10px;">${escapeHtml(t55cd('club_manage_applications_btn'))}</button>` : ''}
+      <p class="panel-note" style="margin-top:20px;">${escapeHtml(t55cd('club_members_label'))}</p>
       <ul class="liked-list">
         ${(members || []).map((m) => {
           const p = memberProfiles.get(m.user_id);
-          const handle = p ? (p.handle || p.username) : '不明';
-          return `<li><span>${m.role === 'owner' ? '👑 ' : ''}@${escapeHtml(handle)}</span><span>${m.role === 'owner' ? 'オーナー' : 'メンバー'}</span></li>`;
-        }).join('') || '<li style="opacity:0.5;">メンバーがいません</li>'}
+          const handle = p ? (p.handle || p.username) : t55cd('club_unknown_member');
+          return `<li><span>${m.role === 'owner' ? '👑 ' : ''}@${escapeHtml(handle)}</span><span>${m.role === 'owner' ? escapeHtml(t55cd('club_role_owner')) : escapeHtml(t55cd('club_role_member'))}</span></li>`;
+        }).join('') || `<li style="opacity:0.5;">${escapeHtml(t55cd('club_no_members'))}</li>`}
       </ul>
     `;
     document.getElementById('back-to-club-list').addEventListener('click', renderClubPanel);
 
     if (isMember && !isOwner) {
       document.getElementById('leave-club-btn').addEventListener('click', async () => {
-        if (!confirm(`${club.name}を脱退しますか？`)) return;
+        if (!confirm(t55cd('club_confirm_leave').replace('{name}', club.name))) return;
         await sb.from('club_members').delete().eq('club_id', clubId).eq('user_id', user.id);
         renderClubDetail(clubId);
       });
     }
     if (!isMember && !myClub && club.join_policy === 'review') {
       document.getElementById('apply-club-btn').addEventListener('click', async () => {
-        if (user.isMinor) { alert('13歳未満の方はこの機能をご利用いただけません'); return; }
+        if (user.isMinor) { alert(t55cd('club_minor_restricted')); return; }
         const { error } = await sb.from('club_applications').insert({ club_id: clubId, user_id: user.id });
         if (!error) document.getElementById('apply-done-msg').classList.remove('hidden');
       });
@@ -1738,14 +1747,14 @@ async function initFeed(user) {
       document.getElementById('join-club-btn').addEventListener('click', async () => {
         if (user.isMinor) {
           const errorEl = document.getElementById('join-club-error');
-          errorEl.textContent = '13歳未満の方はこの機能をご利用いただけません';
+          errorEl.textContent = t55cd('club_minor_restricted');
           errorEl.classList.remove('hidden');
           return;
         }
         const { error } = await sb.from('club_members').insert({ club_id: clubId, user_id: user.id, role: 'member' });
         if (error) {
           const errorEl = document.getElementById('join-club-error');
-          errorEl.textContent = '参加条件を満たしていないため参加できませんでした';
+          errorEl.textContent = t55cd('club_join_condition_failed');
           errorEl.classList.remove('hidden');
           return;
         }
@@ -1759,9 +1768,10 @@ async function initFeed(user) {
 
   async function renderClubApplications(clubId) {
     clubPanelView = 'applications';
-    document.getElementById('club-panel-title').textContent = '参加申請';
+    const t55ca = window.I18N ? window.I18N.t : (k) => k;
+    document.getElementById('club-panel-title').textContent = t55ca('club_applications_title');
     const body = document.getElementById('club-panel-body');
-    body.innerHTML = '<p class="panel-note small">読み込み中...</p>';
+    body.innerHTML = `<p class="panel-note small">${escapeHtml(t55ca('loading_text'))}</p>`;
     const { data: apps } = await sb.from('club_applications').select('id, user_id, status').eq('club_id', clubId).eq('status', 'pending');
     const userIds = (apps || []).map((a) => a.user_id);
     const profs = new Map();
@@ -1770,19 +1780,19 @@ async function initFeed(user) {
       (data || []).forEach((p) => profs.set(p.id, p));
     }
     body.innerHTML = `
-      <button class="back-link" id="back-to-club-detail">← クラブに戻る</button>
+      <button class="back-link" id="back-to-club-detail">${escapeHtml(t55ca('club_back_to_detail'))}</button>
       ${(apps || []).map((a) => {
         const p = profs.get(a.user_id);
         return `
           <div class="search-result" style="cursor:default;">
-            <span class="search-result-title">@${escapeHtml(p ? (p.handle || p.username) : '不明')}</span>
+            <span class="search-result-title">@${escapeHtml(p ? (p.handle || p.username) : t55ca('club_unknown_member'))}</span>
             <div style="display:flex;gap:8px;margin-top:8px;">
-              <button class="post-btn approve-btn" data-app-id="${a.id}" data-user-id="${a.user_id}" style="margin:0;flex:1;">承認</button>
-              <button class="post-btn reject-btn" data-app-id="${a.id}" style="margin:0;flex:1;">却下</button>
+              <button class="post-btn approve-btn" data-app-id="${a.id}" data-user-id="${a.user_id}" style="margin:0;flex:1;">${escapeHtml(t55ca('club_approve_btn'))}</button>
+              <button class="post-btn reject-btn" data-app-id="${a.id}" style="margin:0;flex:1;">${escapeHtml(t55ca('club_reject_btn'))}</button>
             </div>
           </div>
         `;
-      }).join('') || '<p class="panel-note small">保留中の申請はありません</p>'}
+      }).join('') || `<p class="panel-note small">${escapeHtml(t55ca('club_no_pending_applications'))}</p>`}
     `;
     document.getElementById('back-to-club-detail').addEventListener('click', () => renderClubDetail(clubId));
     body.querySelectorAll('.approve-btn').forEach((btn) => {
@@ -1804,12 +1814,12 @@ async function initFeed(user) {
 
   async function renderProfilePanel() {
     const body = document.getElementById('profile-panel-body');
-    body.innerHTML = '<p class="panel-note small">読み込み中...</p>';
+    const t55p = window.I18N ? window.I18N.t : (k) => k;
+    body.innerHTML = `<p class="panel-note small">${escapeHtml(t55p('loading_text'))}</p>`;
     if (!user.isGuest) await fetchMyClub();
     const likedGames = [...liked].map((id) => GAME_DEFS.find((g) => g.id === id)).filter(Boolean);
-    const t55p = window.I18N ? window.I18N.t : (k) => ({ profile_no_club: '所属中のクラブなし' }[k] || k);
     body.innerHTML = `
-      <div class="profile-id-line">${user.handle ? `@${escapeHtml(user.handle)}` : '(ユーザーID未設定)'}</div>
+      <div class="profile-id-line">${user.handle ? `@${escapeHtml(user.handle)}` : escapeHtml(t55p('profile_handle_unset'))}</div>
       <div class="profile-top-row">
         <span class="avatar-lg" style="background:${user.color};border-radius:50%;"></span>
         <button class="profile-club" id="profile-club-badge">
@@ -1825,15 +1835,15 @@ async function initFeed(user) {
       <button class="profile-club" id="open-elements-btn" style="width:100%;justify-content:center;margin-bottom:12px;">
         <span class="club-badge">🔮</span><span data-i18n="profile_view_elements">精霊図鑑を見る(全10体・3D)</span>
       </button>
-      ${(!user.isGuest && !user.isMinor && isNativeApp()) ? '<button class="post-btn" id="watch-ad-btn" style="margin-bottom:16px;">📺 広告を見てコイン+20</button>' : ''}
+      ${(!user.isGuest && !user.isMinor && isNativeApp()) ? `<button class="post-btn" id="watch-ad-btn" style="margin-bottom:16px;">${escapeHtml(t55p('profile_watch_ad_btn'))}</button>` : ''}
       ${(!user.isGuest && !user.isMinor && isNativeApp()) ? `
         <div class="coin-shop">
-          <p class="panel-note small" style="margin-bottom:8px;">🪙 コインを購入</p>
+          <p class="panel-note small" style="margin-bottom:8px;">${escapeHtml(t55p('profile_buy_coins_label'))}</p>
           <div class="coin-shop-grid" id="coin-shop-grid">
             ${COIN_PRODUCTS.map((p) => `
               <button class="coin-shop-item" data-product-id="${p.id}" disabled>
                 <span class="coin-shop-item-coins">🪙${p.coins}</span>
-                <span class="coin-shop-item-price">読み込み中...</span>
+                <span class="coin-shop-item-price">${escapeHtml(t55p('loading_text'))}</span>
               </button>
             `).join('')}
           </div>
@@ -1841,7 +1851,7 @@ async function initFeed(user) {
       ` : ''}
       <div class="profile-username-row">
         <span class="profile-username-text">${escapeHtml(user.name)}</span>
-        <button class="icon-btn" id="edit-username-btn" title="ユーザー名を編集">✏️</button>
+        <button class="icon-btn" id="edit-username-btn" title="${escapeHtml(t55p('profile_edit_username_tooltip'))}">✏️</button>
       </div>
       <div class="profile-stat-row">
         <div class="stat-block"><div class="stat-icon">🎮</div><div class="stat-num">${myPosts.length}</div><div class="stat-label" data-i18n="profile_posts">投稿の数</div></div>
@@ -1850,23 +1860,23 @@ async function initFeed(user) {
       <div style="font-size:12px;opacity:0.5;text-align:center;margin-bottom:20px;">${escapeHtml(maskEmail(user.email))}</div>
       ${user.handle ? '' : `
         <div class="param-row">
-          <label>ユーザーIDを設定する(検索・フォロー・DMに使われます)</label>
-          <input type="text" id="set-handle-input" class="create-title-input" placeholder="半角英数字とアンダースコア、3〜20文字" maxlength="20">
+          <label>${escapeHtml(t55p('profile_set_handle_label'))}</label>
+          <input type="text" id="set-handle-input" class="create-title-input" placeholder="${escapeHtml(t55p('profile_set_handle_placeholder'))}" maxlength="20">
           <p class="error hidden" id="set-handle-error"></p>
-          <button class="post-btn" id="set-handle-btn">設定する</button>
+          <button class="post-btn" id="set-handle-btn">${escapeHtml(t55p('profile_set_handle_btn'))}</button>
         </div>
       `}
-      <p class="panel-note">自分の投稿(${myPosts.length})</p>
+      <p class="panel-note">${escapeHtml(t55p('profile_my_posts_label'))}(${myPosts.length})</p>
       <div class="post-grid">
         ${myPosts.map((p) => {
           const d = GAME_DEFS.find((g) => g.id === p.game_id);
           const emoji = GENRE_EMOJI[d ? d.genre : ''] || '🎮';
           return `<div class="post-tile" data-post-id="${p.id}"><span class="post-tile-emoji">${emoji}</span><span class="post-tile-title">${escapeHtml(p.custom_title || (d ? d.title : p.game_id))}</span></div>`;
-        }).join('') || '<p class="panel-note small">まだありません</p>'}
+        }).join('') || `<p class="panel-note small">${escapeHtml(t55p('none_yet'))}</p>`}
       </div>
-      <p class="panel-note">いいねしたゲーム(${likedGames.length})</p>
+      <p class="panel-note">${escapeHtml(t55p('profile_liked_games_label'))}(${likedGames.length})</p>
       <ul class="liked-list">
-        ${likedGames.map((g) => `<li><span>${escapeHtml(g.title)}</span><span>#${escapeHtml(g.genre)}</span></li>`).join('') || '<li style="opacity:0.5;">まだありません</li>'}
+        ${likedGames.map((g) => `<li><span>${escapeHtml(g.title)}</span><span>#${escapeHtml(g.genre)}</span></li>`).join('') || `<li style="opacity:0.5;">${escapeHtml(t55p('none_yet'))}</li>`}
       </ul>
       <div class="profile-lang-row" id="profile-lang-slot"><label data-i18n="language_label">言語 / Language</label></div>
       <a class="logout-link" id="profile-legal-link" style="color:#4ea8ff;" data-i18n="legal_link">利用規約・プライバシーポリシー</a>
@@ -1882,10 +1892,10 @@ async function initFeed(user) {
     if (watchAdBtn) {
       watchAdBtn.addEventListener('click', async () => {
         watchAdBtn.disabled = true;
-        watchAdBtn.textContent = '読み込み中...';
+        watchAdBtn.textContent = t55p('loading_text');
         const rewarded = await watchRewardedAd();
         watchAdBtn.disabled = false;
-        watchAdBtn.textContent = '📺 広告を見てコイン+20';
+        watchAdBtn.textContent = t55p('profile_watch_ad_btn');
         if (!rewarded) return;
         const { data, error } = await sb.rpc('apply_coin_delta', { delta: 20, txn_reason: 'rewarded_ad' });
         if (error) return;
@@ -1925,7 +1935,7 @@ async function initFeed(user) {
             btn.disabled = false;
           } else {
             anyPending = true;
-            if (pollCount >= 10) priceEl.textContent = '購入不可';
+            if (pollCount >= 10) priceEl.textContent = t55p('profile_purchase_unavailable');
           }
         });
         if (!anyPending || pollCount >= 10) clearInterval(pollPricing);
@@ -1937,7 +1947,7 @@ async function initFeed(user) {
       const row = document.querySelector('.profile-username-row');
       row.innerHTML = `
         <input type="text" id="edit-username-input" class="create-title-input" maxlength="16" style="flex:1;">
-        <button class="icon-btn" id="save-username-btn" title="保存">✔</button>
+        <button class="icon-btn" id="save-username-btn" title="${escapeHtml(t55p('profile_save_tooltip'))}">✔</button>
       `;
       const input = document.getElementById('edit-username-input');
       input.value = user.name;
@@ -1959,13 +1969,13 @@ async function initFeed(user) {
         errorEl.classList.add('hidden');
         const newHandle = document.getElementById('set-handle-input').value.trim().replace(/^@/, '');
         if (!isValidHandle(newHandle)) {
-          errorEl.textContent = 'ユーザーIDは半角英数字とアンダースコアのみ、3〜20文字で入力してください';
+          errorEl.textContent = t55p('profile_set_handle_error_format');
           errorEl.classList.remove('hidden');
           return;
         }
         const { data: existingHandle } = await sb.from('profiles').select('id').ilike('handle', newHandle).maybeSingle();
         if (existingHandle) {
-          errorEl.textContent = 'このユーザーIDは既に使われています';
+          errorEl.textContent = t55p('profile_set_handle_error_taken');
           errorEl.classList.remove('hidden');
           return;
         }
@@ -1977,7 +1987,7 @@ async function initFeed(user) {
         }
         user.handle = newHandle;
         profilesById.set(user.id, { ...(profilesById.get(user.id) || {}), handle: newHandle });
-        userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span>@${escapeHtml(user.handle)} <button id="switch-account-btn">切替</button>`;
+        userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span>@${escapeHtml(user.handle)} <button id="switch-account-btn">${escapeHtml(t55p('switch_account_btn'))}</button>`;
         document.getElementById('switch-account-btn').addEventListener('click', logout);
         renderProfilePanel();
       });
@@ -1996,24 +2006,25 @@ async function initFeed(user) {
   // instead of inserting a new one, and offers deletion.
   function renderPostEditor(post) {
     const def = GAME_DEFS.find((g) => g.id === post.game_id);
+    const t55pe = window.I18N ? window.I18N.t : (k) => k;
     const body = document.getElementById('profile-panel-body');
     body.innerHTML = '';
 
     const back = document.createElement('button');
     back.className = 'back-link';
-    back.textContent = '← 自分の投稿に戻る';
+    back.textContent = t55pe('post_editor_back');
     back.addEventListener('click', () => renderProfilePanel());
     body.appendChild(back);
 
     if (!def) {
       const note = document.createElement('p');
       note.className = 'panel-note';
-      note.textContent = 'このゲームは見つかりませんでした。';
+      note.textContent = t55pe('post_editor_game_not_found');
       body.appendChild(note);
       const delBtn = document.createElement('button');
       delBtn.className = 'post-btn';
       delBtn.style.background = '#c0392b';
-      delBtn.textContent = 'この投稿を削除する';
+      delBtn.textContent = t55pe('post_editor_delete_btn');
       delBtn.addEventListener('click', () => deletePost(post));
       body.appendChild(delBtn);
       return;
@@ -2021,7 +2032,7 @@ async function initFeed(user) {
 
     const titleRow = document.createElement('div');
     titleRow.className = 'param-row';
-    titleRow.innerHTML = '<label>タイトル(自由に書き換えられます)</label><input type="text" class="create-title-input" maxlength="24">';
+    titleRow.innerHTML = `<label>${escapeHtml(t55pe('create_title_label'))}</label><input type="text" class="create-title-input" maxlength="24">`;
     body.appendChild(titleRow);
     const titleInput = titleRow.querySelector('input');
     titleInput.value = post.custom_title || def.title;
@@ -2049,16 +2060,16 @@ async function initFeed(user) {
     if (!(def.params && def.params.length) && !(def.choiceParams && def.choiceParams.length)) {
       const note = document.createElement('p');
       note.className = 'panel-note small';
-      note.textContent = 'このゲームには調整できる項目がありません。タイトルのみ編集できます。';
+      note.textContent = t55pe('post_editor_no_params');
       body.appendChild(note);
     }
 
     const saveBtn = document.createElement('button');
     saveBtn.className = 'post-btn';
-    saveBtn.textContent = '保存する';
+    saveBtn.textContent = t55pe('post_editor_save_btn');
     saveBtn.addEventListener('click', async () => {
       saveBtn.disabled = true;
-      saveBtn.textContent = '保存中...';
+      saveBtn.textContent = t55pe('post_editor_saving_btn');
       const newConfig = { ...baseConfig };
       (def.params || []).forEach((p) => { newConfig[p.key] = Number(sliders[p.key].value); });
       (def.choiceParams || []).forEach((cp) => { newConfig[cp.key] = choiceGetters[cp.key](); });
@@ -2069,8 +2080,8 @@ async function initFeed(user) {
       if (error) {
         console.error('failed to update post', error);
         saveBtn.disabled = false;
-        saveBtn.textContent = '保存する';
-        alert('保存に失敗しました。通信状況を確認してもう一度お試しください。');
+        saveBtn.textContent = t55pe('post_editor_save_btn');
+        alert(t55pe('post_editor_save_failed'));
         return;
       }
       post.custom_title = customTitle;
@@ -2088,17 +2099,18 @@ async function initFeed(user) {
     const delBtn = document.createElement('button');
     delBtn.className = 'post-btn';
     delBtn.style.cssText = 'background:#c0392b;margin-top:8px;';
-    delBtn.textContent = 'この投稿を削除する';
+    delBtn.textContent = t55pe('post_editor_delete_btn');
     delBtn.addEventListener('click', () => deletePost(post));
     body.appendChild(delBtn);
   }
 
   async function deletePost(post) {
-    if (!confirm('この投稿を削除しますか？この操作は取り消せません。')) return;
+    const t55dp = window.I18N ? window.I18N.t : (k) => k;
+    if (!confirm(t55dp('post_editor_delete_confirm'))) return;
     const { error } = await sb.from('posts').delete().eq('id', post.id).eq('creator_id', user.id);
     if (error) {
       console.error('failed to delete post', error);
-      alert('削除に失敗しました。通信状況を確認してもう一度お試しください。');
+      alert(t55dp('post_editor_delete_failed'));
       return;
     }
     myPosts = myPosts.filter((p) => p.id !== post.id);
@@ -2119,15 +2131,16 @@ async function initFeed(user) {
   // and every registered profile (so brand-new accounts that haven't posted yet are still findable).
   // Users are matched/searched by their unique @handle, never by the (non-unique) display name.
   function buildSearchIndex() {
+    const t55i = window.I18N ? window.I18N.t : (k) => k;
     const items = GAME_DEFS.map((def) => ({
-      type: 'game', def, config: {}, customTitle: null, creator: 'Anyway公式', title: def.title, genre: def.genre,
+      type: 'game', def, config: {}, customTitle: null, creator: t55i('official_creator'), title: def.title, genre: def.genre,
     }));
     allPosts.forEach((post) => {
       const def = GAME_DEFS.find((g) => g.id === post.game_id);
       if (!def) return;
       if (isHidden(post.creator_id)) return;
       const profile = profilesById.get(post.creator_id);
-      const creatorName = profile ? (profile.handle || profile.username) : '不明なユーザー';
+      const creatorName = profile ? (profile.handle || profile.username) : t55i('dm_unknown_user');
       items.push({
         type: 'game', def, config: post.config || {}, customTitle: post.custom_title, creator: creatorName, creatorId: post.creator_id,
         title: post.custom_title || def.title, genre: def.genre,
@@ -2151,7 +2164,8 @@ async function initFeed(user) {
   }
 
   function jumpToGame(item) {
-    const creatorName = item.creator === 'Anyway公式' ? null : item.creator;
+    const t55j = window.I18N ? window.I18N.t : (k) => k;
+    const creatorName = item.creator === t55j('official_creator') ? null : item.creator;
     const card = createCard(item.def, item.config, creatorName, item.customTitle, item.creatorId || null);
     feed.insertBefore(card, document.getElementById('loader'));
     openTab('home');
@@ -2252,7 +2266,7 @@ async function initFeed(user) {
       const handle = profile ? (profile.handle || profile.username) : t55d('dm_unknown_user');
       const isUnread = lastMsg.sender_id !== user.id && (!dmReadMap.get(otherId) || new Date(lastMsg.created_at) > new Date(dmReadMap.get(otherId)));
       const previewText = typeof lastMsg.body === 'string' && lastMsg.body.startsWith(window.DuelSystem.INVITE_PREFIX)
-        ? `⚔️ ${lastMsg.body.split('|')[2] || '対戦'}の招待`
+        ? t55d('dm_duel_invite_preview').replace('{title}', lastMsg.body.split('|')[2] || t55d('dm_duel_fallback_title'))
         : lastMsg.body.slice(0, 30);
       const item = document.createElement('button');
       item.className = 'search-result';
@@ -2264,6 +2278,7 @@ async function initFeed(user) {
   }
 
   function openChat(otherUser) {
+    const t55o = window.I18N ? window.I18N.t : (k) => k;
     document.getElementById('dm-panel-title').textContent = `@${otherUser.handle}`;
     const body = document.getElementById('dm-panel-body');
     const isFollowing = followingSet.has(otherUser.id);
@@ -2272,24 +2287,24 @@ async function initFeed(user) {
     const cantMessage = isHidden(otherUser.id);
     body.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <button class="back-link" id="dm-back-to-list" style="margin:0;">← 会話一覧に戻る</button>
+        <button class="back-link" id="dm-back-to-list" style="margin:0;">${escapeHtml(t55o('dm_back_to_list'))}</button>
         <div style="display:flex;gap:8px;">
-          ${(isFriend && !cantMessage) ? '<button class="follow-btn" id="chat-call-btn">📞 通話</button>' : ''}
-          <button class="follow-btn ${isFollowing ? 'following' : ''}" id="chat-follow-btn">${isFollowing ? 'フォロー中' : 'フォローする'}</button>
+          ${(isFriend && !cantMessage) ? `<button class="follow-btn" id="chat-call-btn">${escapeHtml(t55o('dm_call_btn'))}</button>` : ''}
+          <button class="follow-btn ${isFollowing ? 'following' : ''}" id="chat-follow-btn">${escapeHtml(isFollowing ? t55o('follow_btn_following') : t55o('follow_btn_follow'))}</button>
         </div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:14px;margin-bottom:12px;">
-        <button class="report-link" id="chat-report-btn">⚠ 通報</button>
-        <button class="report-link" id="chat-block-btn">${iBlocked ? 'ブロック解除' : '🚫 ブロック'}</button>
+        <button class="report-link" id="chat-report-btn">${escapeHtml(t55o('dm_report_btn'))}</button>
+        <button class="report-link" id="chat-block-btn">${escapeHtml(iBlocked ? t55o('dm_unblock_btn') : t55o('dm_block_btn'))}</button>
       </div>
       <div id="chat-report-form" class="hidden"></div>
       <div id="chat-messages" style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;max-height:55vh;overflow-y:auto;"></div>
-      <p class="panel-note small hidden" id="chat-filter-notice" style="margin:0 0 8px;">⚠️ 危険な内容が含まれていたため、一部を自動的に伏せて送信しました。</p>
+      <p class="panel-note small hidden" id="chat-filter-notice" style="margin:0 0 8px;">${escapeHtml(t55o('dm_filter_notice'))}</p>
       ${cantMessage
-        ? '<p class="chat-blocked-notice">現在このユーザーとメッセージのやり取りはできません。</p>'
+        ? `<p class="chat-blocked-notice">${escapeHtml(t55o('dm_cannot_message_notice'))}</p>`
         : `<div style="display:flex;gap:8px;">
-        <input type="text" id="chat-input" class="create-title-input" placeholder="メッセージを入力" style="flex:1;">
-        <button class="post-btn" id="chat-send-btn" style="width:auto;margin-top:0;padding:0 18px;">送信</button>
+        <input type="text" id="chat-input" class="create-title-input" placeholder="${escapeHtml(t55o('dm_message_placeholder'))}" style="flex:1;">
+        <button class="post-btn" id="chat-send-btn" style="width:auto;margin-top:0;padding:0 18px;">${escapeHtml(t55o('dm_send_btn'))}</button>
       </div>`}
     `;
     document.getElementById('dm-back-to-list').addEventListener('click', () => {
@@ -2302,7 +2317,7 @@ async function initFeed(user) {
 
     document.getElementById('chat-block-btn').addEventListener('click', async () => {
       const wasBlocked = blockedByMe.has(otherUser.id);
-      if (!wasBlocked && !confirm(`@${otherUser.handle} をブロックしますか？お互いにメッセージを送れなくなります。`)) return;
+      if (!wasBlocked && !confirm(t55o('dm_confirm_block').replace('{handle}', otherUser.handle))) return;
       await toggleBlock(otherUser.id);
       openChat(otherUser);
     });
@@ -2313,13 +2328,13 @@ async function initFeed(user) {
       formEl.classList.remove('hidden');
       let selectedReason = 'other';
       formEl.innerHTML = `
-        <p class="panel-note small" style="margin:10px 0;">通報理由を選んでください</p>
+        <p class="panel-note small" style="margin:10px 0;">${escapeHtml(t55o('dm_report_reason_prompt'))}</p>
         <div class="reason-grid">
-          ${REPORT_REASONS.map((r) => `<button type="button" class="reason-item" data-reason="${r.key}">${escapeHtml(r.label)}</button>`).join('')}
+          ${REPORT_REASONS.map((r) => `<button type="button" class="reason-item" data-reason="${r.key}">${escapeHtml(t55o(r.labelKey))}</button>`).join('')}
         </div>
-        <textarea id="report-detail" class="create-title-input" placeholder="詳細(任意)" style="margin-top:10px;min-height:60px;resize:vertical;"></textarea>
-        <button class="post-btn report-submit-btn" id="report-submit-btn">通報を送信</button>
-        <p class="panel-note small hidden" id="report-done-msg" style="margin-top:8px;">通報を受け付けました。ご協力ありがとうございます。</p>
+        <textarea id="report-detail" class="create-title-input" placeholder="${escapeHtml(t55o('dm_report_detail_placeholder'))}" style="margin-top:10px;min-height:60px;resize:vertical;"></textarea>
+        <button class="post-btn report-submit-btn" id="report-submit-btn">${escapeHtml(t55o('dm_report_submit_btn'))}</button>
+        <p class="panel-note small hidden" id="report-done-msg" style="margin-top:8px;">${escapeHtml(t55o('dm_report_done_msg'))}</p>
       `;
       formEl.querySelectorAll('.reason-item').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -2347,13 +2362,13 @@ async function initFeed(user) {
         if (typeof m.body === 'string' && m.body.startsWith(window.DuelSystem.INVITE_PREFIX)) {
           const [, gameId, gameTitle] = m.body.split('|');
           return mine
-            ? `<div style="${bubbleStyle}">⚔️ ${escapeHtml(gameTitle)} の対戦に招待しました</div>`
-            : `<div style="${bubbleStyle}" class="duel-invite-card" data-game-id="${escapeHtml(gameId)}">⚔️ ${escapeHtml(gameTitle)} の対戦リクエストが届いています<br><button class="duel-invite-accept" style="margin-top:6px;padding:6px 12px;border-radius:10px;">参加する</button></div>`;
+            ? `<div style="${bubbleStyle}">${escapeHtml(t55o('dm_duel_invite_sent').replace('{title}', gameTitle))}</div>`
+            : `<div style="${bubbleStyle}" class="duel-invite-card" data-game-id="${escapeHtml(gameId)}">${escapeHtml(t55o('dm_duel_invite_received').replace('{title}', gameTitle))}<br><button class="duel-invite-accept" style="margin-top:6px;padding:6px 12px;border-radius:10px;">${escapeHtml(t55o('join_btn_label'))}</button></div>`;
         }
         if (typeof m.body === 'string' && m.body.startsWith(window.CallSystem.INVITE_PREFIX)) {
           return mine
-            ? `<div style="${bubbleStyle}">📞 通話に招待しました</div>`
-            : `<div style="${bubbleStyle}" class="call-invite-card">📞 通話の着信があります<br><button class="call-invite-accept" style="margin-top:6px;padding:6px 12px;border-radius:10px;">参加する</button></div>`;
+            ? `<div style="${bubbleStyle}">${escapeHtml(t55o('dm_call_invite_sent'))}</div>`
+            : `<div style="${bubbleStyle}" class="call-invite-card">${escapeHtml(t55o('dm_call_invite_received_notice'))}<br><button class="call-invite-accept" style="margin-top:6px;padding:6px 12px;border-radius:10px;">${escapeHtml(t55o('join_btn_label'))}</button></div>`;
         }
         return `<div style="${bubbleStyle}">${escapeHtml(m.body)}</div>`;
       }).join('');

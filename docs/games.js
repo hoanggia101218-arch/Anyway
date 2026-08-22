@@ -1102,7 +1102,11 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
   onHint(gt('hint_fillitall', '下のボタン(WASD/矢印キーもOK)で1マスずつ進み、部屋のマスを全部ぬろう。自分の跡に触れたら終了！自分の跡以外の壁マスは通れないよ'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
-  const BASE_CELL = 26, MIN_CELL = 12, MAX_CELL = 34, PAD = 4, HUD_H = 46;
+  // HUD_H must clear the app's own fixed-position overlays (#user-bar top:12-48px,
+  // .score-badge top:56-~84px, see style.css) -- it used to be 46px, which left the
+  // canvas-drawn "Lv.X n/m"/"Tier..." lines below drawn right underneath/behind those
+  // pills instead of below them. 130px clears both with margin.
+  const BASE_CELL = 26, MIN_CELL = 12, MAX_CELL = 34, PAD = 4, HUD_H = 130;
   // Fallback board size for the endless procedural mode once all 3000 curated levels are
   // cleared -- unchanged from the original fixed-grid behavior.
   const baseCols = Math.max(4, Math.floor(canvas.width / BASE_CELL));
@@ -1222,11 +1226,11 @@ function mountFillItAll(container, { onScore, onHint }, config = {}) {
     ctx.fillRect(offsetX + head.x * cell + 1, offsetY + head.y * cell + 1, cell - 2, cell - 2);
     drawBurst(ctx, particles, dt);
     ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText(`Lv.${level}  ${filled.size}/${levelCells}`, 8, 22);
+    ctx.fillText(`Lv.${level}  ${filled.size}/${levelCells}`, 8, 100);
     if (curTier) {
       ctx.fillStyle = DIFF_COLOR[curDifficulty] || '#fff';
       ctx.font = 'bold 12px sans-serif';
-      ctx.fillText(`Tier ${curTier} ・ ${gt('diff_' + curDifficulty, curDifficulty)}`, 8, 40);
+      ctx.fillText(`Tier ${curTier} ・ ${gt('diff_' + curDifficulty, curDifficulty)}`, 8, 118);
     }
     if (dead) {
       ctx.fillStyle = '#fff';
@@ -2126,6 +2130,877 @@ function mountRunner(container, { onScore, onHint }, config = {}) {
   };
 }
 
+// ---------- 22. Element Hex (パズル, Hexellent/Blocky Blast風カラーマッチ) ----------
+// task108 (MSI, 2026-08-21): Poki実機調査で現在トレンド4位だった"Blocky Blast Puzzle"系の
+// グリッド消しパズルと、事前WebSearch調査のHexellent(ヘックスパズル)を参考にした自作
+// オリジナル。六角形グリッド(flat-top, odd-q offset座標)上で同色の連結グループ(3つ以上)を
+// タップして消すカラーマッチパズル。ドラッグ配置ではなく既存グリッドをタップで消す操作に
+// 絞ることで無人検証でもロジックのバグを見つけやすくしてある。own code、既存作品のコード・
+// 素材は一切再利用していない。
+const HEX_COLS = 7, HEX_ROWS = 7;
+const HEX_COLORS = ['#ff5a3c', '#3ca7ff', '#ffe14d', '#4ed17a', '#9b6bff'];
+// odd-q offset(flat-top)の標準隣接テーブル。同一列の上下(N/S)+隣接列の斜め4方向(NE/SE/NW/SW)。
+function hexNeighbors(col, row) {
+  const dirs = (col % 2 === 0)
+    ? [[1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [0, 1]]
+    : [[1, 1], [1, 0], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+  const out = [];
+  for (const [dc, dr] of dirs) {
+    const c = col + dc, r = row + dr;
+    if (c >= 0 && c < HEX_COLS && r >= 0 && r < HEX_ROWS) out.push([c, r]);
+  }
+  return out;
+}
+function mountHex(container, { onScore, onHint }) {
+  onHint(gt('hint_hex', '同じ色を3つ以上つなげてタップで消そう！'));
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  const reportBest = makeBestTracker('hex', onHint);
+  let grid, score, particles, size, originX, originY, shakeCells, shakeT;
+
+  function layout() {
+    size = Math.min(
+      canvas.width / (1.5 * (HEX_COLS - 1) + 2),
+      canvas.height / (Math.sqrt(3) * (HEX_ROWS + 0.5))
+    ) * 0.92;
+    const boardW = 1.5 * size * (HEX_COLS - 1) + 2 * size;
+    const boardH = Math.sqrt(3) * size * (HEX_ROWS + 0.5);
+    originX = (canvas.width - boardW) / 2 + size;
+    originY = (canvas.height - boardH) / 2 + size * Math.sqrt(3) / 2;
+  }
+  function cellCenter(col, row) {
+    const x = originX + col * size * 1.5;
+    const y = originY + row * size * Math.sqrt(3) + (col % 2 === 1 ? size * Math.sqrt(3) / 2 : 0);
+    return [x, y];
+  }
+  function randomColor() { return Math.floor(Math.random() * HEX_COLORS.length); }
+  function floodFill(col, row) {
+    const color = grid[col][row];
+    if (color < 0) return [];
+    const stack = [[col, row]], seen = new Set([col + ',' + row]), out = [[col, row]];
+    while (stack.length) {
+      const [c, r] = stack.pop();
+      for (const [nc, nr] of hexNeighbors(c, r)) {
+        const key = nc + ',' + nr;
+        if (seen.has(key) || grid[nc][nr] !== color) continue;
+        seen.add(key);
+        stack.push([nc, nr]);
+        out.push([nc, nr]);
+      }
+    }
+    return out;
+  }
+  function maxGroupSize() {
+    const seen = new Set();
+    let max = 0;
+    for (let c = 0; c < HEX_COLS; c++) for (let r = 0; r < HEX_ROWS; r++) {
+      const key = c + ',' + r;
+      if (seen.has(key) || grid[c][r] < 0) continue;
+      const group = floodFill(c, r);
+      group.forEach(([gc, gr]) => seen.add(gc + ',' + gr));
+      max = Math.max(max, group.length);
+    }
+    return max;
+  }
+  function hasAnyMove() {
+    const seen = new Set();
+    for (let c = 0; c < HEX_COLS; c++) for (let r = 0; r < HEX_ROWS; r++) {
+      const key = c + ',' + r;
+      if (seen.has(key) || grid[c][r] < 0) continue;
+      const group = floodFill(c, r);
+      group.forEach(([gc, gr]) => seen.add(gc + ',' + gr));
+      if (group.length >= 3) return true;
+    }
+    return false;
+  }
+  function reshuffle() {
+    const values = [];
+    for (let c = 0; c < HEX_COLS; c++) for (let r = 0; r < HEX_ROWS; r++) if (grid[c][r] >= 0) values.push(grid[c][r]);
+    for (let i = values.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [values[i], values[j]] = [values[j], values[i]];
+    }
+    let k = 0;
+    for (let c = 0; c < HEX_COLS; c++) for (let r = 0; r < HEX_ROWS; r++) if (grid[c][r] >= 0) grid[c][r] = values[k++];
+  }
+  function freshGrid() { return Array.from({ length: HEX_COLS }, () => Array.from({ length: HEX_ROWS }, () => randomColor())); }
+  function reset() {
+    grid = freshGrid();
+    let guard = 0;
+    while (maxGroupSize() >= 5 && guard++ < 30) grid = freshGrid();
+    score = 0; particles = []; shakeCells = []; shakeT = 0;
+  }
+  layout();
+  reset();
+
+  function applyGravity() {
+    for (let c = 0; c < HEX_COLS; c++) {
+      const vals = [];
+      for (let r = 0; r < HEX_ROWS; r++) if (grid[c][r] >= 0) vals.push(grid[c][r]);
+      const missing = HEX_ROWS - vals.length;
+      const newCol = Array(HEX_ROWS).fill(-1);
+      for (let i = 0; i < missing; i++) newCol[i] = randomColor();
+      for (let i = 0; i < vals.length; i++) newCol[missing + i] = vals[i];
+      grid[c] = newCol;
+    }
+  }
+  function pick(px, py) {
+    let best = null, bestD = Infinity;
+    for (let c = 0; c < HEX_COLS; c++) for (let r = 0; r < HEX_ROWS; r++) {
+      const [cx, cy] = cellCenter(c, r);
+      const d = (cx - px) * (cx - px) + (cy - py) * (cy - py);
+      if (d < bestD) { bestD = d; best = [c, r]; }
+    }
+    return (best && bestD <= size * size) ? best : null;
+  }
+  function pointerdown(e) {
+    const rect = canvas.getBoundingClientRect();
+    const cell = pick(e.clientX - rect.left, e.clientY - rect.top);
+    if (!cell) return;
+    const [c, r] = cell;
+    const group = floodFill(c, r);
+    if (group.length >= 3) {
+      score += group.length * group.length * 10;
+      onScore(score); reportBest(score);
+      sfx.score(Math.min(group.length, 10));
+      group.forEach(([gc, gr]) => {
+        const [x, y] = cellCenter(gc, gr);
+        spawnBurst(particles, x, y, HEX_COLORS[grid[gc][gr]], 10);
+        grid[gc][gr] = -1;
+      });
+      applyGravity();
+      if (!hasAnyMove()) { reshuffle(); onHint(gt('hint_hex_reshuffle', '手詰まり…配置をシャッフルしました')); }
+    } else {
+      sfx.bad();
+      shakeCells = group; shakeT = 0.22;
+    }
+  }
+  canvas.addEventListener('pointerdown', pointerdown);
+
+  function drawHex(cx, cy, r, color) {
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI / 180) * 60 * i;
+      const x = cx + r * Math.cos(a), y = cy + r * Math.sin(a);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = color; ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  const stop = loopRAF((dt) => {
+    if (shakeT > 0) shakeT -= dt;
+    ctx.fillStyle = '#141425'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let c = 0; c < HEX_COLS; c++) for (let r = 0; r < HEX_ROWS; r++) {
+      const color = grid[c][r];
+      if (color < 0) continue;
+      let [x, y] = cellCenter(c, r);
+      if (shakeT > 0 && shakeCells.some(([sc, sr]) => sc === c && sr === r)) x += Math.sin(shakeT * 60) * 4;
+      drawHex(x, y, size * 0.92, HEX_COLORS[color]);
+    }
+    drawBurst(ctx, particles, dt);
+  });
+  return () => { stop(); canvas.removeEventListener('pointerdown', pointerdown); canvas.remove(); };
+}
+
+// ---------- Element Flow (パズル) ----------
+// task108 (MSI, 2026-08-21): new_games_roadmap.md記載の実装順(ヘクス→フロー→マーブル)の2本目。
+// Color Block Jam/Water Sort Puzzle型の色分けソートパズル。own code/オリジナル実装(ジャンルの
+// 標準ルール=同色の上澄みを空き/同色レーンへ注ぐ、を10属性テーマの色で自作)。
+const FLOW_COLORS = ['#ff5a3c', '#3ca7ff', '#ffe14d', '#4ed17a', '#9b6bff', '#ff8fd6', '#4a2a80'];
+const FLOW_CAPACITY = 4;
+
+function flowTopColor(tube) { return tube.length ? tube[tube.length - 1] : -1; }
+function flowTopRunLength(tube) {
+  if (!tube.length) return 0;
+  const c = tube[tube.length - 1];
+  let n = 0;
+  for (let i = tube.length - 1; i >= 0 && tube[i] === c; i--) n++;
+  return n;
+}
+// Returns how many orbs would move (0 = illegal): dst must be empty or share src's top color,
+// and have room. This one function backs both the actual pour and the deadlock scan below.
+function flowCanPour(tubes, src, dst) {
+  if (src === dst) return 0;
+  const s = tubes[src], d = tubes[dst];
+  if (!s.length) return 0;
+  const room = FLOW_CAPACITY - d.length;
+  if (room <= 0) return 0;
+  if (d.length && flowTopColor(d) !== flowTopColor(s)) return 0;
+  return Math.min(flowTopRunLength(s), room);
+}
+function flowIsSolved(tubes) {
+  return tubes.every(t => t.length === 0 || (t.length === FLOW_CAPACITY && t.every(c => c === t[0])));
+}
+function flowHasMove(tubes) {
+  for (let i = 0; i < tubes.length; i++) for (let j = 0; j < tubes.length; j++) {
+    if (flowCanPour(tubes, i, j) > 0) return true;
+  }
+  return false;
+}
+// How far `tubes` is from solved: count of tubes that are neither empty nor a uniform full stack.
+// Used only to steer flowIsSolvable's search toward promising states (see below).
+function flowMessiness(tubes) {
+  let n = 0;
+  for (const t of tubes) {
+    if (t.length === 0) continue;
+    if (t.length !== FLOW_CAPACITY || !t.every(c => c === t[0])) n++;
+  }
+  return n;
+}
+// Is `tubes` reachable to a solved state via legal (color-matched) pours? Used only inside
+// flowGenerate below (a handful of calls per new puzzle, not a hot per-frame path). Best-first
+// (greedy on flowMessiness, frontier capped to the most-promising branches) rather than plain
+// BFS -- verified empirically (headless JScript harness, task108) to resolve puzzles plain BFS
+// couldn't within the same node budget, since uniform breadth-first wastes most of a limited
+// budget on branches that don't reduce messiness at all.
+function flowIsSolvable(tubes, maxNodes = 20000) {
+  const key = (ts) => ts.map(t => t.join(',')).join('|');
+  const seen = new Set([key(tubes)]);
+  let frontier = [{ t: tubes, h: flowMessiness(tubes) }];
+  let nodes = 0;
+  while (frontier.length && nodes < maxNodes) {
+    frontier.sort((a, b) => a.h - b.h);
+    const cur = frontier.shift();
+    if (flowIsSolved(cur.t)) return true;
+    for (let i = 0; i < cur.t.length; i++) for (let j = 0; j < cur.t.length; j++) {
+      const amt = flowCanPour(cur.t, i, j);
+      if (amt <= 0) continue;
+      const clone = cur.t.map(x => x.slice());
+      const c = clone[i][clone[i].length - 1];
+      for (let k = 0; k < amt; k++) { clone[i].pop(); clone[j].push(c); }
+      const kk = key(clone);
+      if (seen.has(kk)) continue;
+      seen.add(kk);
+      frontier.push({ t: clone, h: flowMessiness(clone) });
+      nodes++;
+    }
+    if (frontier.length > 4000) frontier.length = 4000; // keep only the best-looking branches
+  }
+  return false;
+}
+// Generated by "unsolving" a solved board: move a random-length top run onto a random OTHER tube
+// with room, ignoring color (this is the reverse of a solve-pour, not a solve-pour itself -- a
+// forward color-matched shuffle from a solved board can only ever relocate whole full tubes
+// between each other, since no two tubes share a color yet, so it can never actually fragment/mix
+// them). flowIsSolvable() then confirms the scrambled result is still reachable back to solved
+// before it's handed to the player; if not (rare), the whole scramble is retried.
+function flowScramble(numColors, numTubes, scrambleSteps) {
+  const tubes = Array.from({ length: numTubes }, () => []);
+  for (let c = 0; c < numColors; c++) for (let k = 0; k < FLOW_CAPACITY; k++) tubes[c].push(c);
+  for (let m = 0; m < scrambleSteps; m++) {
+    const src = Math.floor(Math.random() * numTubes);
+    if (!tubes[src].length) continue;
+    const dst = Math.floor(Math.random() * numTubes);
+    if (dst === src) continue;
+    const room = FLOW_CAPACITY - tubes[dst].length;
+    if (room <= 0) continue;
+    const maxRun = flowTopRunLength(tubes[src]);
+    const moveN = 1 + Math.floor(Math.random() * Math.min(maxRun, room));
+    const c = tubes[src][tubes[src].length - 1];
+    for (let k = 0; k < moveN; k++) { tubes[src].pop(); tubes[dst].push(c); }
+  }
+  return tubes;
+}
+function flowGenerate(numColors) {
+  const numTubes = numColors + 2;
+  for (let guard = 0; guard < 12; guard++) {
+    const tubes = flowScramble(numColors, numTubes, 30 + numColors * 8);
+    if (!flowIsSolved(tubes) && flowHasMove(tubes) && flowIsSolvable(tubes)) return tubes;
+  }
+  // Fallback (should be very rare -- headless testing, task108, never triggered this for
+  // numColors<=6): a much lighter scramble is closer to solved and therefore both far more
+  // likely to already satisfy the checks above and far cheaper to verify if it doesn't.
+  for (let guard = 0; guard < 8; guard++) {
+    const tubes = flowScramble(numColors, numTubes, numColors * 2);
+    if (!flowIsSolved(tubes) && flowHasMove(tubes) && flowIsSolvable(tubes)) return tubes;
+  }
+  return flowScramble(numColors, numTubes, numColors); // last resort: trivially solvable, barely scrambled
+}
+
+function mountFlow(container, { onScore, onHint }) {
+  onHint(gt('hint_flow', 'レーンをタップして選び、別のレーンをタップして同じ色を注ごう！全部同じ色で1本にまとめよう'));
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  const reportBest = makeBestTracker('flow', onHint);
+  let tubes, colors, level, score, selected, particles, solving;
+  let tubeW, tubeH, gap, startX, baseY, orbR;
+
+  function layout() {
+    const n = tubes.length;
+    const availW = canvas.width - 32;
+    tubeW = Math.max(28, Math.min(52, (availW - (n - 1) * 10) / n));
+    gap = n > 1 ? (availW - tubeW * n) / (n - 1) : 0;
+    const totalW = tubeW * n + gap * (n - 1);
+    startX = (canvas.width - totalW) / 2;
+    orbR = tubeW * 0.36;
+    tubeH = orbR * 2 * FLOW_CAPACITY + 16;
+    baseY = canvas.height - 150; // stay clear of the app's bottom-nav + side-action buttons
+  }
+  function newPuzzle() {
+    // Capped at 6 (not FLOW_COLORS.length=7): keeps tube count <=8 for narrow mobile screens, and
+    // keeps flowGenerate's solvability search (flowIsSolvable) fast and reliable -- verified via
+    // headless testing (task108) that 7-color/9-tube boards make that search notably slower/less
+    // reliable within its node budget than 6-color/8-tube ones.
+    colors = Math.min(4 + Math.floor(level / 2), 6);
+    tubes = flowGenerate(colors);
+    selected = -1; solving = false;
+    layout(); // tube count changes with level, so layout must recompute every puzzle, not just once
+  }
+  function reset() { level = 0; score = 0; particles = []; newPuzzle(); }
+  reset();
+
+  function tubeRect(i) {
+    const x = startX + i * (tubeW + gap);
+    return { x, y: baseY - tubeH, w: tubeW, h: tubeH };
+  }
+  function pick(px, py) {
+    for (let i = 0; i < tubes.length; i++) {
+      const r = tubeRect(i);
+      if (px >= r.x - gap / 2 && px <= r.x + r.w + gap / 2 && py >= r.y - 20 && py <= baseY + 10) return i;
+    }
+    return null;
+  }
+  function pour(src, dst) {
+    const amt = flowCanPour(tubes, src, dst);
+    if (amt <= 0) return false;
+    const c = tubes[src][tubes[src].length - 1];
+    for (let k = 0; k < amt; k++) { tubes[src].pop(); tubes[dst].push(c); }
+    score += amt * 10;
+    onScore(score);
+    sfx.score(amt);
+    reportBest(score);
+    const r = tubeRect(dst);
+    spawnBurst(particles, r.x + r.w / 2, r.y + r.h - (tubes[dst].length - 1) * orbR * 2 - orbR, FLOW_COLORS[c], 8);
+    if (flowIsSolved(tubes)) {
+      solving = true;
+      sfx.win();
+      score += 100; onScore(score); reportBest(score);
+      onHint(gt('hint_flow_solved', '✨ クリア！次のパズルへ'));
+      setTimeout(() => { level++; newPuzzle(); }, 900);
+    } else if (!flowHasMove(tubes)) {
+      solving = true;
+      onHint(gt('hint_flow_stuck', '手詰まり…新しいパズルに切り替えます'));
+      setTimeout(() => { newPuzzle(); }, 1200);
+    }
+    return true;
+  }
+  function pointerdown(e) {
+    if (solving) return;
+    const rect = canvas.getBoundingClientRect();
+    const i = pick(e.clientX - rect.left, e.clientY - rect.top);
+    if (i === null) return;
+    if (selected === -1) {
+      if (tubes[i].length) selected = i;
+    } else if (selected === i) {
+      selected = -1;
+    } else {
+      const ok = pour(selected, i);
+      selected = ok ? -1 : (tubes[i].length ? i : -1);
+    }
+  }
+  canvas.addEventListener('pointerdown', pointerdown);
+
+  function drawTube(i) {
+    const r = tubeRect(i);
+    ctx.strokeStyle = i === selected ? '#ffe14d' : 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = i === selected ? 3 : 2;
+    ctx.beginPath();
+    ctx.moveTo(r.x, r.y);
+    ctx.lineTo(r.x, r.y + r.h);
+    ctx.quadraticCurveTo(r.x, r.y + r.h + 8, r.x + 8, r.y + r.h + 8);
+    ctx.lineTo(r.x + r.w - 8, r.y + r.h + 8);
+    ctx.quadraticCurveTo(r.x + r.w, r.y + r.h + 8, r.x + r.w, r.y + r.h);
+    ctx.lineTo(r.x + r.w, r.y);
+    ctx.stroke();
+    const t = tubes[i];
+    for (let k = 0; k < t.length; k++) {
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h - k * orbR * 2 - orbR;
+      ctx.fillStyle = FLOW_COLORS[t[k]];
+      ctx.beginPath(); ctx.arc(cx, cy, orbR * 0.86, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  const stop = loopRAF((dt) => {
+    ctx.fillStyle = '#141425'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < tubes.length; i++) drawTube(i);
+    drawBurst(ctx, particles, dt);
+  });
+  return () => { stop(); canvas.removeEventListener('pointerdown', pointerdown); canvas.remove(); };
+}
+
+// ---------- Element Fort (アクション) ----------
+// 2026-08-22 (MSI, user request via live session): Clash Royale-inspired 1-lane tower push duel
+// vs an AI bot. Own code/original -- extracts only the core loop (elixir resource that refills
+// over time, gated deployment of auto-fighting units, push each other's tower) and reskins it
+// with the existing 10-element spirit roster; deliberately drops the deck-building/2-lane/
+// buildings-and-spells/live-PvP-matchmaking side of the source material to fit Anyway's ~45s
+// feed-card format (see output_contrib/MSI/element_fort_clash_royale_analysis.md for the full
+// analysis + scoping rationale). Real PvP (reusing royale.js/trapdojo.js's Supabase realtime
+// pattern) is an explicit future candidate, not attempted here.
+// task108 (MSI, 2026-08-22, user-directed quality pass): `sprite` is an optional path to a
+// generated character-art PNG (assets/element_sprites/<id>.png, transparent background,
+// generated via Gemini + cropped/matted locally -- see element_fort_clash_royale_analysis.md
+// §"品質向上ループ"). Elements without one yet still render fine via color+icon (fortSpriteFor
+// below falls back automatically), so art can be filled in incrementally without ever breaking
+// the game. Fill in the rest here as they're generated.
+const FORT_ELEMENTS = [
+  { id: 'blaze', color: '#e6551a', icon: '🔥', cost: 3, hp: 80, atk: 40, speed: 0.16, sprite: 'assets/element_sprites/blaze.png' },
+  { id: 'aqua', color: '#0288d1', icon: '💧', cost: 3, hp: 110, atk: 25, speed: 0.14, sprite: 'assets/element_sprites/aqua.png' },
+  { id: 'volt', color: '#e6a800', icon: '⚡', cost: 2, hp: 50, atk: 35, speed: 0.26, sprite: 'assets/element_sprites/volt.png' },
+  { id: 'gust', color: '#4c9a2a', icon: '🌪️', cost: 2, hp: 60, atk: 22, speed: 0.24 },
+  { id: 'terra', color: '#6b7a3c', icon: '🪨', cost: 5, hp: 220, atk: 20, speed: 0.09 },
+  { id: 'frost', color: '#3d94c2', icon: '❄️', cost: 4, hp: 130, atk: 45, speed: 0.10 },
+  { id: 'light', color: '#d9a53a', icon: '✨', cost: 3, hp: 100, atk: 30, speed: 0.15 },
+  { id: 'nox', color: '#4a2a80', icon: '🌑', cost: 3, hp: 70, atk: 50, speed: 0.20 },
+  { id: 'leaf', color: '#4f8a2c', icon: '🌿', cost: 4, hp: 150, atk: 28, speed: 0.12 },
+  { id: 'plasma', color: '#6a3fc0', icon: '🔮', cost: 6, hp: 200, atk: 55, speed: 0.13 },
+];
+// Shared, lazily-populated image cache keyed by element id -- loaded once per page session
+// (not per mount) so re-entering the Fort card repeatedly never re-fetches the same PNGs.
+// Returns the Image once decoded and ready to draw, or null (caller falls back to color+icon)
+// while it's still loading or if the element has no sprite at all.
+const _fortSpriteCache = {};
+function fortSpriteFor(el) {
+  if (!el.sprite) return null;
+  let entry = _fortSpriteCache[el.id];
+  if (!entry) {
+    const img = new Image();
+    entry = _fortSpriteCache[el.id] = { img, ready: false };
+    img.onload = () => { entry.ready = true; };
+    img.src = el.sprite;
+  }
+  return entry.ready ? entry.img : null;
+}
+const FORT_MAX_ELIXIR = 10;
+const FORT_ELIXIR_REGEN_SEC = 2.2; // seconds per +1 elixir
+const FORT_ENGAGE_RANGE = 0.045; // lane-fraction distance at which two troops start fighting
+const FORT_TOWER_ATK = 26;
+const FORT_TOWER_HP = 260;
+const FORT_MATCH_SECONDS = 48;
+
+function fortRandomCard() { return Math.floor(Math.random() * FORT_ELEMENTS.length); }
+// `id` is a per-match monotonic counter (state.nextTroopId) rather than array index, so
+// mountFort's render loop can tell "this troop died this tick" apart from "this troop just
+// hasn't been pushed yet" purely by identity, across the array splice in fortTick below.
+function fortMakeTroop(state, elementIdx, side) {
+  const el = FORT_ELEMENTS[elementIdx];
+  const id = (state.nextTroopId = (state.nextTroopId || 0) + 1);
+  return { id, el, side, hp: el.hp, maxHp: el.hp, pos: side === 'player' ? 0 : 1, attacking: null };
+}
+// Advances the whole battle by dt seconds: elixir regen, troop movement, combat, tower damage.
+// Pure over `state` (mutates it in place and returns it) so it's callable identically from the
+// real game loop and from a headless test harness -- no canvas/DOM/timer access inside.
+function fortTick(state, dt) {
+  state.playerElixir = Math.min(FORT_MAX_ELIXIR, state.playerElixir + dt / FORT_ELIXIR_REGEN_SEC);
+  state.aiElixir = Math.min(FORT_MAX_ELIXIR, state.aiElixir + dt / FORT_ELIXIR_REGEN_SEC);
+
+  // Pair up engaged troops (closest opposing pair within FORT_ENGAGE_RANGE), mutual damage.
+  const players = state.troops.filter(t => t.side === 'player' && t.hp > 0);
+  const ais = state.troops.filter(t => t.side === 'ai' && t.hp > 0);
+  for (const p of players) p.attacking = null;
+  for (const a of ais) a.attacking = null;
+  for (const p of players) {
+    let best = null, bestD = FORT_ENGAGE_RANGE;
+    for (const a of ais) {
+      if (a.attacking) continue;
+      const d = Math.abs(p.pos - a.pos);
+      if (d <= bestD) { best = a; bestD = d; }
+    }
+    if (best) { p.attacking = best; best.attacking = p; }
+  }
+  for (const t of state.troops) {
+    if (t.hp <= 0) continue;
+    if (t.attacking) {
+      t.attacking.hp -= t.el.atk * dt;
+      continue; // engaged troops hold position instead of advancing
+    }
+    if (t.side === 'player') {
+      if (t.pos < 1) { t.pos = Math.min(1, t.pos + t.el.speed * dt); continue; }
+      state.aiTowerHp = Math.max(0, state.aiTowerHp - t.el.atk * dt);
+      t.hp -= FORT_TOWER_ATK * dt;
+    } else {
+      if (t.pos > 0) { t.pos = Math.max(0, t.pos - t.el.speed * dt); continue; }
+      state.playerTowerHp = Math.max(0, state.playerTowerHp - t.el.atk * dt);
+      t.hp -= FORT_TOWER_ATK * dt;
+    }
+  }
+  // task108 (MSI, 2026-08-22, quality pass): record who died *this* tick (position + side +
+  // color) before they're spliced out, so the render loop can spawn a death burst/sfx without
+  // fortTick itself touching canvas/particles -- keeps this function pure/headless-testable.
+  state.deadThisTick = state.troops.filter(t => t.hp <= 0).map(t => ({ pos: t.pos, side: t.side, color: t.el.color }));
+  state.troops = state.troops.filter(t => t.hp > 0);
+  state.elapsed += dt;
+  return state;
+}
+function fortWinner(state) {
+  if (state.playerTowerHp <= 0 && state.aiTowerHp <= 0) return 'draw';
+  if (state.aiTowerHp <= 0) return 'player';
+  if (state.playerTowerHp <= 0) return 'ai';
+  if (state.elapsed >= FORT_MATCH_SECONDS) {
+    if (state.playerTowerHp === state.aiTowerHp) return 'draw';
+    return state.playerTowerHp > state.aiTowerHp ? 'player' : 'ai';
+  }
+  return null;
+}
+// Simple rule-based opponent: deploys a random affordable card roughly every couple of seconds,
+// biased faster when the player is pushing (mirrors "defend when under pressure").
+function fortAiMaybeDeploy(state, dt) {
+  state.aiTimer = (state.aiTimer || 0) - dt;
+  if (state.aiTimer > 0) return null;
+  const pressured = state.troops.some(t => t.side === 'player' && t.pos > 0.55);
+  state.aiTimer = pressured ? (0.6 + Math.random() * 0.6) : (1.4 + Math.random() * 1.6);
+  const affordable = FORT_ELEMENTS.map((el, i) => i).filter(i => FORT_ELEMENTS[i].cost <= state.aiElixir);
+  if (!affordable.length) return null;
+  const idx = affordable[Math.floor(Math.random() * affordable.length)];
+  state.aiElixir -= FORT_ELEMENTS[idx].cost;
+  state.troops.push(fortMakeTroop(state, idx, 'ai'));
+  return idx;
+}
+// task108 (MSI, 2026-08-22, quality pass §7-3 item 3): every card used to play the same
+// generic sfx.score(0) beep on deploy regardless of element. Derives a distinct-but-consistent
+// deploy chime per element from its own stats (no per-element hand-tuned table to keep in sync
+// as FORT_ELEMENTS grows) -- heavier/tankier troops (high hp) lean toward a rounder waveform
+// and slightly longer tail, hard-hitters (high atk) lean toward a sharper waveform, and faster
+// troops pitch higher. Pure function of `el`, so headless-testable without an AudioContext.
+function fortSfxFor(el) {
+  const freq = 300 + el.speed * 900 + el.atk * 2;
+  const type = el.atk >= 40 ? 'square' : (el.hp >= 150 ? 'triangle' : 'sine');
+  const dur = 0.1 + Math.min(1, el.hp / 220) * 0.06;
+  return { freq, type, gain: 0.13, dur };
+}
+
+function mountFort(container, { onScore, onHint }) {
+  onHint(gt('hint_fort', 'カードをタップしてエレメントを出撃させよう！エリクサーがたまったら出せる、敵タワーを壊せ'));
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  const reportBest = makeBestTracker('fort', onHint);
+  let state, hand, score, particles, ended, cardRects;
+
+  function newHand() { return [fortRandomCard(), fortRandomCard(), fortRandomCard(), fortRandomCard()]; }
+  function reset() {
+    state = { playerElixir: 5, aiElixir: 5, troops: [], playerTowerHp: FORT_TOWER_HP, aiTowerHp: FORT_TOWER_HP, elapsed: 0, aiTimer: 1, deadThisTick: [] };
+    hand = newHand();
+    score = 0; particles = []; ended = false;
+  }
+  reset();
+
+  const HAND_H = 74;
+  // BOTTOM_SAFE clears the app's own fixed bottom overlays: .overlay-bottom (title/creator
+  // text, spans roughly bottom:92px-132px) and #bottom-nav (spans bottom:0-74px) -- see
+  // style.css. The whole HAND_H-tall card row needs to sit *above* bottom:132px, not just
+  // above bottom:16px (the old value), or its lower portion renders underneath the opaque
+  // #bottom-nav bar (cost numbers clipped) and the elixir bar lands directly on top of the
+  // title/creator text (verified via a headless screenshot: both were visibly happening).
+  const BOTTOM_SAFE = 140;
+  function layoutCards() {
+    const n = hand.length;
+    const w = Math.min(74, (canvas.width - 16 * (n + 1)) / n);
+    const totalW = w * n + 16 * (n - 1);
+    const startX = (canvas.width - totalW) / 2;
+    const y = canvas.height - HAND_H - BOTTOM_SAFE;
+    cardRects = hand.map((_, i) => ({ x: startX + i * (w + 16), y, w, h: HAND_H }));
+  }
+  layoutCards();
+
+  function playCard(i) {
+    if (ended) return;
+    const idx = hand[i];
+    const el = FORT_ELEMENTS[idx];
+    if (el.cost > state.playerElixir) { sfx.bad(); return; }
+    state.playerElixir -= el.cost;
+    state.troops.push(fortMakeTroop(state, idx, 'player'));
+    hand[i] = fortRandomCard();
+    const p = fortSfxFor(el);
+    beep(p.freq, p.dur, p.type, p.gain);
+    const laneX = canvas.width / 2, laneY = canvas.height - HAND_H - BOTTOM_SAFE - 24;
+    spawnBurst(particles, laneX, laneY, el.color, 6);
+  }
+  function pointerdown(e) {
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    for (let i = 0; i < cardRects.length; i++) {
+      const r = cardRects[i];
+      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) { playCard(i); return; }
+    }
+  }
+  canvas.addEventListener('pointerdown', pointerdown);
+
+  function laneY(pos) {
+    const top = 90, bottom = canvas.height - HAND_H - BOTTOM_SAFE - 20;
+    return bottom - pos * (bottom - top);
+  }
+  function drawTowerBar(x, y, w, hp, maxHp, color) {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(x, y, w, 8);
+    ctx.fillStyle = color; ctx.fillRect(x, y, w * Math.max(0, hp / maxHp), 8);
+  }
+  const stop = loopRAF((dt) => {
+    if (!ended) {
+      const prevAiHp = state.aiTowerHp, prevPlayerHp = state.playerTowerHp;
+      fortAiMaybeDeploy(state, dt);
+      fortTick(state, dt);
+      const dealt = prevAiHp - state.aiTowerHp;
+      if (dealt > 0) {
+        score += Math.round(dealt); onScore(score); reportBest(score);
+        // task108 (MSI, 2026-08-22, quality pass §7-3 item 2): a trickle of sparks at the
+        // tower being hit -- capped per-frame so a troop parked at the tower for several
+        // seconds reads as "sustained impact", not an ever-growing particle pile.
+        spawnBurst(particles, canvas.width / 2, laneY(1) - 10, '#ff5a3c', Math.min(3, Math.ceil(dealt / 8)));
+      }
+      if (prevPlayerHp - state.playerTowerHp > 0) {
+        spawnBurst(particles, canvas.width / 2, laneY(0) + 10, '#4ea8ff', Math.min(3, Math.ceil((prevPlayerHp - state.playerTowerHp) / 8)));
+      }
+      // Troops used to just vanish the instant their hp hit 0 -- no burst, no sfx, nothing
+      // marked the kill. deadThisTick (populated by fortTick above) drives a pop burst + a
+      // soft beep per kill instead, on both sides so losses read as clearly as kills do.
+      for (const d of state.deadThisTick) {
+        spawnBurst(particles, canvas.width / 2 + (d.side === 'player' ? -18 : 18), laneY(d.pos), d.color, 8);
+      }
+      if (state.deadThisTick.length) beep(170, 0.09, 'triangle', 0.08);
+      const w = fortWinner(state);
+      if (w) {
+        ended = true;
+        if (w === 'player') {
+          sfx.win(); score += 150; onHint(gt('hint_fort_win', '🏆 敵タワーを撃破！勝利！'));
+          spawnBurst(particles, canvas.width / 2, laneY(1) - 10, '#ff5a3c', 28);
+        } else if (w === 'ai') {
+          sfx.gameover(); onHint(gt('hint_fort_lose', '…タワーが陥落した。次の試合へ'));
+          spawnBurst(particles, canvas.width / 2, laneY(0) + 10, '#4ea8ff', 28);
+        } else {
+          onHint(gt('hint_fort_draw', '引き分け！次の試合へ'));
+        }
+        if (w !== 'draw') shakeEl(canvas, 260);
+        onScore(score); reportBest(score);
+        setTimeout(reset, 1400);
+      }
+    }
+    ctx.fillStyle = '#101026'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(120,170,255,0.35)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, canvas.height / 2); ctx.lineTo(canvas.width, canvas.height / 2); ctx.stroke();
+
+    drawTowerBar(canvas.width / 2 - 40, laneY(1) - 26, 80, state.aiTowerHp, FORT_TOWER_HP, '#ff5a3c');
+    ctx.fillStyle = '#3a3a55'; ctx.fillRect(canvas.width / 2 - 22, laneY(1) - 20, 44, 20);
+    drawTowerBar(canvas.width / 2 - 40, laneY(0) + 12, 80, state.playerTowerHp, FORT_TOWER_HP, '#4ea8ff');
+    ctx.fillStyle = '#3a3a55'; ctx.fillRect(canvas.width / 2 - 22, laneY(0), 44, 20);
+
+    for (const t of state.troops) {
+      const x = canvas.width / 2 + (t.side === 'player' ? -18 : 18), y = laneY(t.pos);
+      const sprite = fortSpriteFor(t.el);
+      if (sprite) {
+        const dh = 34, dw = dh * (sprite.width / sprite.height);
+        ctx.drawImage(sprite, x - dw / 2, y - dh / 2, dw, dh);
+      } else {
+        ctx.fillStyle = t.el.color;
+        ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.fill();
+        ctx.font = '14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(t.el.icon, x, y);
+      }
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(x - 14, y - 22, 28, 4);
+      ctx.fillStyle = '#4ed17a'; ctx.fillRect(x - 14, y - 22, 28 * Math.max(0, t.hp / t.maxHp), 4);
+    }
+    drawBurst(ctx, particles, dt);
+
+    // Elixir bar
+    const eBarX = 16, eBarY = canvas.height - HAND_H - BOTTOM_SAFE - 18, eBarW = canvas.width - 32;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(eBarX, eBarY, eBarW, 10);
+    ctx.fillStyle = '#c060ff'; ctx.fillRect(eBarX, eBarY, eBarW * (state.playerElixir / FORT_MAX_ELIXIR), 10);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(Math.floor(state.playerElixir) + '/' + FORT_MAX_ELIXIR, eBarX, eBarY - 4);
+
+    // Hand cards
+    for (let i = 0; i < cardRects.length; i++) {
+      const r = cardRects[i], el = FORT_ELEMENTS[hand[i]];
+      const affordable = el.cost <= state.playerElixir;
+      ctx.fillStyle = affordable ? '#2a2a45' : '#1a1a2a';
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      // task108 (MSI, 2026-08-22, quality pass §7-3 item 4): a slow breathing glow on the
+      // border of every affordable card, so "ready to play" is legible at a glance instead of
+      // only differing from "too expensive" by a slightly brighter fill color.
+      const pulse = affordable ? 0.5 + 0.5 * Math.sin(performance.now() / 260) : 0;
+      ctx.strokeStyle = affordable ? el.color : 'rgba(255,255,255,0.15)'; ctx.lineWidth = affordable ? 2 + pulse * 1.4 : 2;
+      ctx.strokeRect(r.x, r.y, r.w, r.h);
+      const cardSprite = fortSpriteFor(el);
+      if (cardSprite) {
+        const dh = r.h * 0.62, dw = dh * (cardSprite.width / cardSprite.height);
+        if (!affordable) ctx.globalAlpha = 0.45;
+        ctx.drawImage(cardSprite, r.x + r.w / 2 - dw / 2, r.y + 4, dw, dh);
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.font = '22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = affordable ? '#fff' : '#666';
+        ctx.fillText(el.icon, r.x + r.w / 2, r.y + r.h / 2 - 10);
+      }
+      ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = affordable ? '#fff' : '#666';
+      ctx.fillText(String(el.cost), r.x + r.w / 2, r.y + r.h - 12);
+    }
+  });
+
+  return () => { stop(); canvas.removeEventListener('pointerdown', pointerdown); canvas.remove(); };
+}
+
+// ---------- 23. Element Trail (パズル, Longcat風スライド塗りつぶし) ----------
+// task108 (MSI, 2026-08-21): poki.com/jp/g/longcatを実際にChromeで操作して分析した結果、
+// 核心メカニクスは「1マスずつ移動」ではなく「入力方向へ壁/障害物/自分の跡にぶつかるまで
+// 一気にスライドする」ことだと判明(既存の『ぜんぶぬろう!』task68/85はTiho1マス移動で別物)。
+// 既存ゲーム・Toshibaのマップ生成ループ(task85)とは競合しないよう、これは新規の別ゲームとして
+// own codeで実装。キャラクターはPokiの猫キャラではなく、この10体のエレメント精霊を使用
+// (画像アセットは使わず、trapdojo.js/characters.jsのELEMENT_COLORSと同じ配色をcanvas上に
+// 手続き的に描画。全10属性を即カバーでき、画像生成・ダウンロード待ちが不要なため)。
+// 8ステージは全て、幅優先探索の自作ソルバーで実際に解けることを検証済み(推測なし)。
+const TRAIL_LEVELS = [
+  { start: [1, 2], rows: ['... ', '... ', ' ...', ' ...'] },
+  { start: [0, 0], rows: ['....', '....', '....', '....'] },
+  { start: [3, 1], rows: ['X .. ', '.....', '.....', '   ..', '   ..'] },
+  { start: [0, 2], rows: ['..  ..', '..  ..', '......', '......'] },
+  { start: [3, 1], rows: ['......', '....X.', '......', '..    ', ' .    '] },
+  { start: [3, 2], rows: ['   .. ', '  ... ', '..... ', ' .... ', 'X.... ', ' ....X'] },
+  { start: [2, 4], rows: [' ..   ', ' ....X', ' .....', ' .....', '....  ', '....  ', '  ..  '] },
+  { start: [0, 4], rows: ['....', '....', '....', '....', '....', '....', '.X..', '. ..'] },
+];
+const TRAIL_ELEMENTS = [
+  { id: 'blaze', core: '#ff5a3c' }, { id: 'aqua', core: '#3ba7ff' }, { id: 'volt', core: '#ffe14d' },
+  { id: 'gust', core: '#4de0c0' }, { id: 'terra', core: '#b8834f' }, { id: 'frost', core: '#9fe8ff' },
+  { id: 'light', core: '#fff2b3' }, { id: 'nox', core: '#8b5cf6' }, { id: 'leaf', core: '#4caf50' },
+  { id: 'plasma', core: '#ff3ec8' },
+];
+function mountTrail(container, { onScore, onHint }) {
+  onHint(gt('hint_trail', '矢印/ボタンで進む方向へ、壁か障害物まで一気にスライド！全マスを塗りつぶそう'));
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  const reportBest = makeBestTracker('trail', onHint);
+  // Same fix as mountFillItAll above: HUD_H must clear the app's own fixed #user-bar/
+  // .score-badge overlays (see style.css), not just be a small cosmetic top margin.
+  const HUD_H = 110, PAD = 8;
+  let cols, rowsN, grid, cell, offsetX, offsetY;
+  let levelIdx, head, filled, targetCount, score, dead, particles, element, transitioning;
+
+  function parseLevel(lv) {
+    rowsN = lv.rows.length;
+    cols = Math.max(...lv.rows.map((r) => r.length));
+    grid = lv.rows.map((r) => r.padEnd(cols, ' '));
+  }
+  function layoutBoard() {
+    cell = Math.max(16, Math.min(46, Math.floor(Math.min(
+      (canvas.width - PAD * 2) / cols,
+      (canvas.height - HUD_H - PAD * 2) / rowsN
+    ))));
+    offsetX = Math.floor((canvas.width - cols * cell) / 2);
+    offsetY = HUD_H + Math.floor((canvas.height - HUD_H - rowsN * cell) / 2);
+  }
+  function isFloor(c, r) { return c >= 0 && c < cols && r >= 0 && r < rowsN && grid[r][c] !== ' '; }
+  function isObstacle(c, r) { return isFloor(c, r) && grid[r][c] === 'X'; }
+  function passable(c, r) { return isFloor(c, r) && !isObstacle(c, r); }
+  function anyMoveLeft() {
+    for (const [dc, dr] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+      const nc = head.x + dc, nr = head.y + dr;
+      if (passable(nc, nr) && !filled.has(nc + ',' + nr)) return true;
+    }
+    return false;
+  }
+  function startLevel(idx) {
+    const lv = TRAIL_LEVELS[idx % TRAIL_LEVELS.length];
+    parseLevel(lv);
+    layoutBoard();
+    element = TRAIL_ELEMENTS[idx % TRAIL_ELEMENTS.length];
+    head = { x: lv.start[0], y: lv.start[1] };
+    filled = new Set([head.x + ',' + head.y]);
+    targetCount = 0;
+    for (let r = 0; r < rowsN; r++) for (let c = 0; c < cols; c++) if (passable(c, r)) targetCount++;
+    dead = false; particles = []; transitioning = false;
+  }
+  levelIdx = 0; score = 0; startLevel(levelIdx);
+
+  function slide(dir) {
+    if (dead || !dir || transitioning) return;
+    let x = head.x, y = head.y, moved = 0;
+    while (true) {
+      const nx = x + dir.x, ny = y + dir.y;
+      if (!passable(nx, ny)) break;
+      const key = nx + ',' + ny;
+      if (filled.has(key)) break;
+      x = nx; y = ny; filled.add(key); moved++;
+      spawnBurst(particles, offsetX + x * cell + cell / 2, offsetY + y * cell + cell / 2, element.core, 4);
+    }
+    if (moved === 0) { shakeEl(canvas); return; }
+    head = { x, y };
+    score += moved; onScore(score); reportBest(score);
+    sfx.score(Math.min(moved, 6));
+    if (filled.size >= targetCount) {
+      sfx.win(); score += 20; onScore(score); reportBest(score);
+      transitioning = true;
+      onHint(gt('hint_trail_clear', 'クリア！次のステージへ'));
+      setTimeout(() => { levelIdx++; startLevel(levelIdx); }, 420);
+      return;
+    }
+    if (!anyMoveLeft()) {
+      dead = true; sfx.gameover(); flashEl(canvas); reportBest(score);
+      onHint(gt('hint_trail_stuck', '手詰まり…タップでこのステージをやり直し'));
+    }
+  }
+  const DIR = { up: { x: 0, y: -1 }, down: { x: 0, y: 1 }, left: { x: -1, y: 0 }, right: { x: 1, y: 0 } };
+  function keydown(e) {
+    const key = {
+      ArrowUp: 'up', w: 'up', W: 'up', ArrowDown: 'down', s: 'down', S: 'down',
+      ArrowLeft: 'left', a: 'left', A: 'left', ArrowRight: 'right', d: 'right', D: 'right',
+    }[e.key];
+    if (key) { e.preventDefault(); slide(DIR[key]); }
+  }
+  window.addEventListener('keydown', keydown);
+  const dpad = makeDpad(container, (key) => slide(DIR[key]));
+  function tapCanvas() { if (dead) startLevel(levelIdx); }
+  canvas.addEventListener('pointerdown', tapCanvas);
+
+  function drawFace(cx, cy, r, color) {
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#1a1a2a';
+    ctx.beginPath(); ctx.arc(cx - r * 0.32, cy - r * 0.08, r * 0.13, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + r * 0.32, cy - r * 0.08, r * 0.13, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy + r * 0.18, r * 0.28, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  }
+  const stop = loopRAF((dt) => {
+    ctx.fillStyle = '#12121e'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let r = 0; r < rowsN; r++) for (let c = 0; c < cols; c++) {
+      if (!isFloor(c, r)) continue;
+      const x = offsetX + c * cell, y = offsetY + r * cell;
+      if (isObstacle(c, r)) {
+        ctx.fillStyle = '#2a2a38';
+        ctx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.strokeRect(x + 4, y + 4, cell - 8, cell - 8);
+      } else {
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        ctx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+      }
+    }
+    for (const key of filled) {
+      const [c, r] = key.split(',').map(Number);
+      if (c === head.x && r === head.y) continue;
+      ctx.fillStyle = element.core;
+      ctx.globalAlpha = 0.85;
+      ctx.fillRect(offsetX + c * cell + 2, offsetY + r * cell + 2, cell - 4, cell - 4);
+      ctx.globalAlpha = 1;
+    }
+    drawFace(offsetX + head.x * cell + cell / 2, offsetY + head.y * cell + cell / 2, cell * 0.42, dead ? '#777' : element.core);
+    drawBurst(ctx, particles, dt);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(`Lv.${levelIdx + 1}  ${filled.size}/${targetCount}`, 8, 100);
+    if (dead) {
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(gt('restart_hint_button', 'タップ/ボタンでリスタート'), canvas.width / 2, canvas.height / 2);
+    }
+  });
+
+  return () => {
+    stop();
+    window.removeEventListener('keydown', keydown);
+    canvas.removeEventListener('pointerdown', tapCanvas);
+    dpad.remove();
+    canvas.remove();
+  };
+}
+
 const GAME_DEFS = [
   { id: 'dodge', title: 'ブロック避け', genre: 'アクション', mount: mountDodge,
     params: [{ key: 'blockSpeed', label: 'ブロックの速さ', min: 120, max: 400, step: 20, default: 180 }] },
@@ -2183,6 +3058,24 @@ const GAME_DEFS = [
   // 同じ理由でdeferred-wrapper(mount-call時にwindow.mountSpiralを解決、load順に依存しない)。
   { id: 'spiral', title: 'エレメント・スパイラル', genre: 'アクション',
     mount: (container, cbs, config) => window.mountSpiral(container, cbs, config) },
+  // task108 (MSI, 2026-08-21): Poki実機調査(トレンド4位"Blocky Blast Puzzle")+事前調査の
+  // Hexellent着想。六角形グリッドの同色連結タップ消し。own code/オリジナル。
+  { id: 'hex', title: 'エレメント・ヘクス', genre: 'パズル', mount: mountHex },
+  // task108 (MSI, 2026-08-21): ロードマップの実装順2本目。Water Sort Puzzle着想の色分けソート
+  // パズル。own code/オリジナル。
+  { id: 'flow', title: 'エレメント・フロー', genre: 'パズル', mount: mountFlow },
+  // task108 (MSI, 2026-08-22): ロードマップの実装順3本目・最後。Drive Mad/Marble Run 3D着想の
+  // 左右チルト物理バランス走行。own file(marble.js)なので royale/cup/trapdojo/spiral と同じ
+  // 理由でdeferred-wrapper(mount-call時にwindow.mountMarbleを解決、load順に依存しない)。
+  { id: 'marble', title: 'エレメント・マーブル', genre: 'アクション',
+    mount: (container, cbs, config) => window.mountMarble(container, cbs, config) },
+  // 2026-08-22 (MSI, user request): Clash Royale-inspired 1-lane tower push duel vs AI. See
+  // mountFort above for the full design-scoping rationale.
+  { id: 'fort', title: 'エレメント・フォート', genre: 'アクション', mount: mountFort },
+  // task108 (MSI, 2026-08-22): poki.com/jp/g/longcatを実機Chromeで操作分析した結果着想の
+  // スライド塗りつぶしパズル。own code/オリジナル。8ステージは自作BFSソルバーで解けることを
+  // 検証済み。詳細はmountTrail定義部のコメント参照。
+  { id: 'trail', title: 'エレメント・トレイル', genre: 'パズル', mount: mountTrail },
 ];
 
 window.GAME_DEFS = GAME_DEFS;

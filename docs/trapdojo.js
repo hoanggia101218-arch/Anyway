@@ -415,8 +415,10 @@
       const [, , scale] = drawStageFrame(ctx, canvas, stg, frame);
       const [sx, sy] = toScreenPoint(canvas, p.x + PLAYER_W / 2, p.y + PLAYER_H, scale);
       drawBlockChar(ctx, sx, sy, scale, elementColor, facing, walkPhase, false);
+      // y=100 (not the top-left corner) so this HUD clears the app's own fixed #user-bar/
+      // .score-badge overlays (see style.css) -- same fix applied to games.js/royale.js/cup.js.
       ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(`${stg.difficulty} ${stageIdx + 1}/${stages.length}　クリア数: ${cleared}`, 8, 40);
+      ctx.fillText(`${stg.difficulty} ${stageIdx + 1}/${stages.length}　クリア数: ${cleared}`, 8, 100);
     });
 
     return () => {
@@ -590,8 +592,9 @@
         const [sx, sy] = [ox + (p.x + PLAYER_W / 2) * scale, oy + (p.y + PLAYER_H) * scale];
         drawBlockChar(ctx, sx, sy, scale, elementColor, facing, walkPhase, false);
       }
+      // Same #user-bar/.score-badge overlap fix as the solo-mode HUD above.
       ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(`協力プレイ ${stg.difficulty} (${finishers.size}/${Math.max(1, Object.keys(channel.presenceState()).length)}人ゴール)`, 8, 40);
+      ctx.fillText(`協力プレイ ${stg.difficulty} (${finishers.size}/${Math.max(1, Object.keys(channel.presenceState()).length)}人ゴール)`, 8, 100);
     });
 
     return () => {

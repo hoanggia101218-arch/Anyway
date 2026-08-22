@@ -16,6 +16,14 @@
   const CALL_INVITE_PREFIX = '📞CALL_INVITE📞';
   const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
 
+  // Mirrors duel.js's gt(): translate via i18n.js if available, else fall back to the
+  // Japanese literal (this file's original hardcoded strings, kept as safe defaults).
+  function gt(key, fallback) {
+    if (!window.I18N) return fallback;
+    const v = window.I18N.t(key);
+    return v === key ? fallback : v;
+  }
+
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
@@ -28,7 +36,7 @@
   function makeOverlay() {
     const el = document.createElement('div');
     el.id = 'call-overlay';
-    el.innerHTML = '<div class="duel-box"><button class="panel-back" id="call-close">← 閉じる</button><div id="call-body"></div></div>';
+    el.innerHTML = '<div class="duel-box"><button class="panel-back" id="call-close">←</button><div id="call-body"></div></div>';
     document.body.appendChild(el);
     return el;
   }
@@ -62,12 +70,12 @@
       overlay.remove();
     });
 
-    setBody(overlay, `<h2>📞 ${escapeHtml(otherLabel)}</h2><p id="call-status">マイクを準備しています…</p><div class="duel-spinner"></div>`);
+    setBody(overlay, `<h2>📞 ${escapeHtml(otherLabel)}</h2><p id="call-status">${escapeHtml(gt('call_preparing_mic', 'マイクを準備しています…'))}</p><div class="duel-spinner"></div>`);
 
     navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
       if (closed) { stream.getTracks().forEach((t) => t.stop()); return; }
       localStream = stream;
-      setStatus(overlay, '相手を待っています…');
+      setStatus(overlay, gt('call_waiting_other', '相手を待っています…'));
 
       pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
@@ -84,9 +92,9 @@
       };
       pc.onconnectionstatechange = () => {
         if (closed) return;
-        if (pc.connectionState === 'connected') setStatus(overlay, '通話中');
+        if (pc.connectionState === 'connected') setStatus(overlay, gt('call_in_progress', '通話中'));
         if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
-          setStatus(overlay, '通話が終了しました');
+          setStatus(overlay, gt('call_ended', '通話が終了しました'));
           setTimeout(() => { teardown(); overlay.remove(); }, 1500);
         }
       };
@@ -122,14 +130,14 @@
         })
         .on('broadcast', { event: 'hangup' }, () => {
           if (closed) return;
-          setStatus(overlay, '相手が通話を終了しました');
+          setStatus(overlay, gt('call_other_ended', '相手が通話を終了しました'));
           setTimeout(() => { teardown(); overlay.remove(); }, 1500);
         })
         .subscribe((status) => {
           if (status === 'SUBSCRIBED' && !closed) callChannel.track({ id: me.id });
         });
     }).catch(() => {
-      setBody(overlay, '<h2>⚠️ マイクを使用できませんでした</h2><p style="font-size:12px;">ブラウザの設定でマイクの使用を許可してください。</p>');
+      setBody(overlay, `<h2>${escapeHtml(gt('call_mic_error_title', '⚠️ マイクを使用できませんでした'))}</h2><p style="font-size:12px;">${escapeHtml(gt('call_mic_error_hint', 'ブラウザの設定でマイクの使用を許可してください。'))}</p>`);
     });
   }
 
@@ -138,13 +146,13 @@
     const { error } = await sb.from('messages').insert({ sender_id: me.id, recipient_id: friend.id, body: `${CALL_INVITE_PREFIX}|${friend.id}` });
     if (error) console.error('failed to send call invite message', error);
     const overlay = makeOverlay();
-    runCallChannel(sb, me, friend.id, `@${friend.handle || friend.username || 'フレンド'}`, overlay);
+    runCallChannel(sb, me, friend.id, `@${friend.handle || friend.username || gt('duel_friend_fallback', 'フレンド')}`, overlay);
   }
 
   function acceptCall(sb, me, callerId, callerLabel) {
     if (!me || me.isGuest) return;
     const overlay = makeOverlay();
-    runCallChannel(sb, me, callerId, callerLabel || 'フレンド', overlay);
+    runCallChannel(sb, me, callerId, callerLabel || gt('duel_friend_fallback', 'フレンド'), overlay);
   }
 
   window.CallSystem = { INVITE_PREFIX: CALL_INVITE_PREFIX, startCall, acceptCall };

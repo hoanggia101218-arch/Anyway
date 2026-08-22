@@ -17,10 +17,18 @@
     return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  // Mirrors games.js's gt(): translate via i18n.js if available, else fall back to the
+  // Japanese string that was always here (this file had no i18n coverage until task108/MSI).
+  function gt(key, fallback) {
+    if (!window.I18N) return fallback;
+    const v = window.I18N.t(key);
+    return v === key ? fallback : v;
+  }
+
   function makeOverlay() {
     const el = document.createElement('div');
     el.id = 'duel-overlay';
-    el.innerHTML = `<div class="duel-box"><button class="panel-back" id="duel-close">← 閉じる</button><div id="duel-body"></div></div>`;
+    el.innerHTML = `<div class="duel-box"><button class="panel-back" id="duel-close">←</button><div id="duel-body"></div></div>`;
     document.body.appendChild(el);
     return el;
   }
@@ -79,7 +87,7 @@
     function runRound() {
       if (closed) return;
       tapped = false; myResult = null; oppResult = null; roundOver = false;
-      setBody(overlay, `<h2 id="duel-msg">赤いうちは待って…</h2><div id="duel-target" class="duel-target duel-target-red"></div>`);
+      setBody(overlay, `<h2 id="duel-msg">${escapeHtml(gt('duel_wait_msg', '赤いうちは待って…'))}</h2><div id="duel-target" class="duel-target duel-target-red"></div>`);
       const targetEl = overlay.querySelector('#duel-target');
       const msgEl = overlay.querySelector('#duel-msg');
 
@@ -88,7 +96,7 @@
         if (Date.now() >= deadline && !targetEl.classList.contains('duel-target-green')) {
           targetEl.classList.remove('duel-target-red');
           targetEl.classList.add('duel-target-green');
-          msgEl.textContent = '今だ！タップ！';
+          msgEl.textContent = gt('duel_go_msg', '今だ！タップ！');
         }
         requestAnimationFrame(frame);
       }
@@ -113,13 +121,17 @@
       else if (myResult === -1) outcome = 'lose';
       else if (oppResult === -1) outcome = 'win';
       else outcome = myResult < oppResult ? 'win' : myResult > oppResult ? 'lose' : 'draw';
-      const label = { win: '🎉 勝利！', lose: '😢 敗北…', draw: '🤝 引き分け', 'draw-early': '両者フライング' }[outcome];
-      const myLabel = myResult === -1 ? 'フライング' : `${myResult}ms`;
-      const oppLabel = oppResult === -1 ? 'フライング' : `${oppResult}ms`;
+      const label = {
+        win: gt('duel_result_win', '🎉 勝利！'), lose: gt('duel_result_lose', '😢 敗北…'),
+        draw: gt('duel_result_draw', '🤝 引き分け'), 'draw-early': gt('duel_result_draw_early', '両者フライング'),
+      }[outcome];
+      const falseStart = gt('duel_false_start', 'フライング');
+      const myLabel = myResult === -1 ? falseStart : `${myResult}ms`;
+      const oppLabel = oppResult === -1 ? falseStart : `${oppResult}ms`;
       setBody(overlay, `
-        <h2>${label}</h2>
-        <p>あなた: ${myLabel} / 相手: ${oppLabel}</p>
-        <button class="primary" id="duel-again" style="width:100%;padding:13px;border-radius:14px;margin-top:12px;">もう一度対戦</button>
+        <h2>${escapeHtml(label)}</h2>
+        <p>${escapeHtml(gt('duel_score_line', 'あなた: {my} / 相手: {opp}').replace('{my}', myLabel).replace('{opp}', oppLabel))}</p>
+        <button class="primary" id="duel-again" style="width:100%;padding:13px;border-radius:14px;margin-top:12px;">${escapeHtml(gt('duel_play_again_btn', 'もう一度対戦'))}</button>
       `);
       overlay.querySelector('#duel-again').addEventListener('click', () => {
         closed = true;
@@ -141,13 +153,13 @@
       const waitMs = Math.max(0, deadline - Date.now());
       const box = overlay.querySelector('.duel-box');
       if (box) box.classList.add('duel-box-game');
-      setBody(overlay, `<h2>⚔️ ${escapeHtml(title)}</h2><p id="duel-msg">まもなく開始…</p><div id="duel-game-area"></div>`);
+      setBody(overlay, `<h2>⚔️ ${escapeHtml(title)}</h2><p id="duel-msg">${escapeHtml(gt('duel_starting_soon', 'まもなく開始…'))}</p><div id="duel-game-area"></div>`);
       const msgEl = overlay.querySelector('#duel-msg');
 
       setTimeout(() => {
         if (closed) return;
         if (!def || typeof def.mount !== 'function') {
-          msgEl.textContent = 'このゲームは対戦に対応していません';
+          msgEl.textContent = gt('duel_unsupported_game', 'このゲームは対戦に対応していません');
           return;
         }
         let peak = 0;
@@ -166,13 +178,13 @@
           if (closed) return;
           myResult = peak;
           duelChannel.send({ type: 'broadcast', event: 'result', payload: { id: me.id, score: peak } });
-          setBody(overlay, `<h2>結果を待っています…</h2><p>あなたのスコア: ${peak}</p><div class="duel-spinner"></div>`);
+          setBody(overlay, `<h2>${escapeHtml(gt('duel_waiting_result', '結果を待っています…'))}</h2><p>${escapeHtml(gt('duel_your_score_line', 'あなたのスコア: {score}').replace('{score}', peak))}</p><div class="duel-spinner"></div>`);
           maybeShowScoreResult();
         };
         const tickTimer = setInterval(() => {
           if (closed) { clearInterval(tickTimer); return; }
           const remain = Math.max(0, endAt - Date.now());
-          msgEl.textContent = `残り時間: ${Math.ceil(remain / 1000)}秒`;
+          msgEl.textContent = gt('duel_time_remaining', '残り時間: {sec}秒').replace('{sec}', Math.ceil(remain / 1000));
           if (remain <= 0) finish();
         }, 250);
       }, waitMs);
@@ -182,11 +194,13 @@
       if (roundOver || myResult === null || oppResult === null || closed) return;
       roundOver = true;
       const outcome = myResult > oppResult ? 'win' : myResult < oppResult ? 'lose' : 'draw';
-      const label = { win: '🎉 勝利！', lose: '😢 敗北…', draw: '🤝 引き分け' }[outcome];
+      const label = {
+        win: gt('duel_result_win', '🎉 勝利！'), lose: gt('duel_result_lose', '😢 敗北…'), draw: gt('duel_result_draw', '🤝 引き分け'),
+      }[outcome];
       setBody(overlay, `
-        <h2>${label}</h2>
-        <p>あなた: ${myResult} / 相手: ${oppResult}</p>
-        <button class="primary" id="duel-again" style="width:100%;padding:13px;border-radius:14px;margin-top:12px;">もう一度対戦</button>
+        <h2>${escapeHtml(label)}</h2>
+        <p>${escapeHtml(gt('duel_score_line', 'あなた: {my} / 相手: {opp}').replace('{my}', myResult).replace('{opp}', oppResult))}</p>
+        <button class="primary" id="duel-again" style="width:100%;padding:13px;border-radius:14px;margin-top:12px;">${escapeHtml(gt('duel_play_again_btn', 'もう一度対戦'))}</button>
       `);
       overlay.querySelector('#duel-again').addEventListener('click', () => {
         closed = true;
@@ -202,9 +216,9 @@
     if (!me || me.isGuest) return;
     const overlay = makeOverlay();
     setBody(overlay, `
-      <h2>⚔️ 対戦相手を探しています…</h2>
+      <h2>${escapeHtml(gt('duel_searching_title', '⚔️ 対戦相手を探しています…'))}</h2>
       <div class="duel-spinner"></div>
-      <p style="font-size:11px;opacity:0.6;">同じ瞬間にこの画面を開いている人とマッチングします</p>
+      <p style="font-size:11px;opacity:0.6;">${escapeHtml(gt('duel_searching_hint', '同じ瞬間にこの画面を開いている人とマッチングします'))}</p>
     `);
 
     let closed = false, invited = null, heartbeatTimer = null, staleTimer = null;
@@ -256,20 +270,22 @@
   async function inviteFriendToDuel(sb, gameId, gameTitle, me, friend) {
     if (!me || me.isGuest || !friend) return;
     const overlay = makeOverlay();
-    setBody(overlay, `<h2>⚔️ 招待を送信中…</h2><div class="duel-spinner"></div>`);
+    setBody(overlay, `<h2>${escapeHtml(gt('duel_sending_invite', '⚔️ 招待を送信中…'))}</h2><div class="duel-spinner"></div>`);
     const { error } = await sb.from('messages').insert({ sender_id: me.id, recipient_id: friend.id, body: `${INVITE_PREFIX}|${gameId}|${gameTitle}` });
     if (error) {
-      setBody(overlay, `<h2>⚠️ 招待を送れませんでした</h2><p style="font-size:12px;">${escapeHtml(error.message || '通信エラー')}</p>`);
+      setBody(overlay, `<h2>${escapeHtml(gt('duel_invite_failed_title', '⚠️ 招待を送れませんでした'))}</h2><p style="font-size:12px;">${escapeHtml(error.message || gt('duel_comm_error', '通信エラー'))}</p>`);
       return;
     }
-    setBody(overlay, `<h2>⚔️ ${escapeHtml(friend.username || friend.handle || 'フレンド')}さんを招待しました</h2><p>相手が参加するのを待っています…</p><div class="duel-spinner"></div>`);
+    const friendName = friend.username || friend.handle || gt('duel_friend_fallback', 'フレンド');
+    setBody(overlay, `<h2>${escapeHtml(gt('duel_invited_friend_title', '⚔️ {name}さんを招待しました').replace('{name}', friendName))}</h2><p>${escapeHtml(gt('duel_waiting_opponent_join', '相手が参加するのを待っています…'))}</p><div class="duel-spinner"></div>`);
     runDuelChannel(sb, gameId, me, friend.id, overlay);
   }
 
   async function acceptDuelInvite(sb, gameId, me, opponentId, opponentName) {
     if (!me || me.isGuest) return;
     const overlay = makeOverlay();
-    setBody(overlay, `<h2>⚔️ ${escapeHtml(opponentName || 'フレンド')}さんとの対戦に参加しました</h2><p>まもなく開始します…</p><div class="duel-spinner"></div>`);
+    const name = opponentName || gt('duel_friend_fallback', 'フレンド');
+    setBody(overlay, `<h2>${escapeHtml(gt('duel_joined_friend_title', '⚔️ {name}さんとの対戦に参加しました').replace('{name}', name))}</h2><p>${escapeHtml(gt('duel_starting_shortly', 'まもなく開始します…'))}</p><div class="duel-spinner"></div>`);
     runDuelChannel(sb, gameId, me, opponentId, overlay);
   }
 
@@ -277,12 +293,13 @@
   function openFriendPicker(sb, gameId, gameTitle, me, friends) {
     const el = document.createElement('div');
     el.id = 'duel-overlay';
+    const inviteTitle = escapeHtml(gt('duel_invite_friend_title', '⚔️ フレンドを誘う'));
     if (!friends.length) {
-      el.innerHTML = `<div class="duel-box"><button class="panel-back" id="duel-close">← 閉じる</button>
-        <h2>⚔️ フレンドを誘う</h2><p>お互いフォローし合っている「フレンド」がまだいません。まずは誰かをフォローして、フォローされてみてください。</p></div>`;
+      el.innerHTML = `<div class="duel-box"><button class="panel-back" id="duel-close">←</button>
+        <h2>${inviteTitle}</h2><p>${escapeHtml(gt('duel_no_friends_hint', 'お互いフォローし合っている「フレンド」がまだいません。まずは誰かをフォローして、フォローされてみてください。'))}</p></div>`;
     } else {
-      el.innerHTML = `<div class="duel-box"><button class="panel-back" id="duel-close">← 閉じる</button>
-        <h2>⚔️ フレンドを誘う</h2>
+      el.innerHTML = `<div class="duel-box"><button class="panel-back" id="duel-close">←</button>
+        <h2>${inviteTitle}</h2>
         <div style="max-height:280px;overflow-y:auto;text-align:left;">
           ${friends.map((f) => `<button class="friend-pick-btn" data-id="${f.id}">@${escapeHtml(f.handle || f.username)}</button>`).join('')}
         </div>

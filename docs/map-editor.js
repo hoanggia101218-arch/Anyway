@@ -24,6 +24,12 @@ const {
   buildFrost, buildLight, buildNox, buildLeaf, buildPlasma,
 } = window.SpiritModels;
 
+function gt(key, fallback) {
+  if (!window.I18N) return fallback;
+  const v = window.I18N.t(key);
+  return v === key ? fallback : v;
+}
+
 const CHAR_BUILDERS = {
   blaze: buildBlaze, aqua: buildAqua, volt: buildVolt, gust: buildGust, terra: buildTerra,
   frost: buildFrost, light: buildLight, nox: buildNox, leaf: buildLeaf, plasma: buildPlasma,
@@ -492,13 +498,13 @@ function mount(container, opts) {
 
   const backBtn = document.createElement("button");
   backBtn.className = "me-back";
-  backBtn.textContent = "← マップ選択に戻る";
+  backBtn.textContent = gt("me_back_to_selector", "← マップ選択に戻る");
   backBtn.addEventListener("click", () => { if (onBack) onBack(); });
   stage.appendChild(backBtn);
 
   const hint = document.createElement("div");
   hint.className = "me-hint";
-  hint.textContent = "ホイールでズーム / 右ドラッグで回転 / 中ボタンドラッグで移動\nキャラ・アイテムは下の一覧からドラッグしてマップに配置";
+  hint.textContent = gt("me_hint_controls", "ホイールでズーム / 右ドラッグで回転 / 中ボタンドラッグで移動\nキャラ・アイテムは下の一覧からドラッグしてマップに配置");
   hint.style.whiteSpace = "pre-line";
   stage.appendChild(hint);
 
@@ -512,7 +518,7 @@ function mount(container, opts) {
 
   const delBtn = document.createElement("button");
   delBtn.className = "me-delbtn";
-  delBtn.textContent = "🗑 選択中を削除";
+  delBtn.textContent = gt("me_delete_selected", "🗑 選択中を削除");
   stage.appendChild(delBtn);
 
   // ---------------- Three.js scene ----------------
@@ -573,14 +579,15 @@ function mount(container, opts) {
   function itemCount() { return placed.filter((p) => p.kind === "item").length; }
 
   function updateCounter() {
-    counter.textContent = `キャラ ${charCount()}/${MAX_CHARACTERS} ・ アイテム ${itemCount()}個`;
+    counter.textContent = gt("me_counter", "キャラ {chars}/{max} ・ アイテム {items}個")
+      .replace("{chars}", charCount()).replace("{max}", MAX_CHARACTERS).replace("{items}", itemCount());
   }
 
   function showBubbleFor(charDef) {
     if (!charDef) { bubble.innerHTML = ""; return; }
-    bubble.innerHTML = `<div class="me-bubble-name">${escapeHtml(charDef.name)}<span class="me-bubble-element">#${escapeHtml(charDef.element)}属性</span></div>
-      <div class="me-bubble-line">技: ${escapeHtml(charDef.skillLine || "")}</div>
-      <div class="me-bubble-line">必殺技: ${escapeHtml(charDef.ultimateName || "")}</div>`;
+    bubble.innerHTML = `<div class="me-bubble-name">${escapeHtml(charDef.name)}<span class="me-bubble-element">#${escapeHtml(charDef.element)}${escapeHtml(gt("me_bubble_element_suffix", "属性"))}</span></div>
+      <div class="me-bubble-line">${escapeHtml(gt("me_bubble_skill_label", "技"))}: ${escapeHtml(charDef.skillLine || "")}</div>
+      <div class="me-bubble-line">${escapeHtml(gt("me_bubble_ultimate_label", "必殺技"))}: ${escapeHtml(charDef.ultimateName || "")}</div>`;
   }
 
   function escapeHtml(s) {
@@ -634,7 +641,7 @@ function mount(container, opts) {
       primaryCharPlacement = record;
       showBubbleFor(record.def);
       confirmBtn.disabled = false;
-      confirmBtn.textContent = `${record.def.name}で投稿する →`;
+      confirmBtn.textContent = gt("me_confirm_with_name", "{name}で投稿する →").replace("{name}", record.def.name);
     }
   }
 
@@ -652,7 +659,7 @@ function mount(container, opts) {
       const nextChar = placed.find((p) => p.kind === "character") || null;
       primaryCharPlacement = nextChar;
       if (nextChar) { selectPlacement(nextChar); }
-      else { showBubbleFor(null); confirmBtn.disabled = true; confirmBtn.textContent = "キャラを配置してください"; }
+      else { showBubbleFor(null); confirmBtn.disabled = true; confirmBtn.textContent = gt("me_confirm_placeholder", "キャラを配置してください"); }
     }
     updateCounter();
   }
@@ -696,13 +703,13 @@ function mount(container, opts) {
   tabs.className = "me-tray-tabs";
   const charTab = document.createElement("button");
   charTab.className = "me-tray-tab active";
-  charTab.textContent = "🧑‍🚀 キャラ";
+  charTab.textContent = gt("me_tab_character", "🧑‍🚀 キャラ");
   const itemTab = document.createElement("button");
   itemTab.className = "me-tray-tab";
-  itemTab.textContent = "🧰 アイテム";
+  itemTab.textContent = gt("me_tab_item", "🧰 アイテム");
   const rulesTab = document.createElement("button");
   rulesTab.className = "me-tray-tab";
-  rulesTab.textContent = "⚙️ ルール";
+  rulesTab.textContent = gt("me_tab_rules", "⚙️ ルール");
   tabs.appendChild(charTab);
   tabs.appendChild(itemTab);
   tabs.appendChild(rulesTab);
@@ -725,7 +732,7 @@ function mount(container, opts) {
   confirmRow.className = "me-confirm-row";
   const confirmBtn = document.createElement("button");
   confirmBtn.className = "me-confirm";
-  confirmBtn.textContent = "キャラを配置してください";
+  confirmBtn.textContent = gt("me_confirm_placeholder", "キャラを配置してください");
   confirmBtn.disabled = true;
   confirmRow.appendChild(confirmBtn);
   tray.appendChild(confirmRow);
@@ -761,19 +768,19 @@ function mount(container, opts) {
     });
   }
   const TIME_LIMIT_OPTIONS = [
-    { value: 0, label: "なし" }, { value: 60, label: "60秒" },
-    { value: 120, label: "120秒" }, { value: 180, label: "180秒" },
+    { value: 0, label: gt("me_time_none", "なし") }, { value: 60, label: gt("me_time_seconds", "{n}秒").replace("{n}", 60) },
+    { value: 120, label: gt("me_time_seconds", "{n}秒").replace("{n}", 120) }, { value: 180, label: gt("me_time_seconds", "{n}秒").replace("{n}", 180) },
   ];
   const DIFFICULTY_OPTIONS = [
-    { value: 0.7, label: "遅い" }, { value: 1, label: "普通" }, { value: 1.4, label: "速い" },
+    { value: 0.7, label: gt("me_diff_slow", "遅い") }, { value: 1, label: gt("me_diff_normal", "普通") }, { value: 1.4, label: gt("me_diff_fast", "速い") },
   ];
   function renderRulesTab() {
     trayBody.innerHTML = "";
     const wrap = document.createElement("div");
     wrap.className = "me-rules";
     wrap.innerHTML = `
-      <div class="me-rules-row"><span class="me-rules-label">制限時間</span><div class="me-rules-opts" data-key="timeLimit"></div></div>
-      <div class="me-rules-row"><span class="me-rules-label">敵の出現速度</span><div class="me-rules-opts" data-key="difficulty"></div></div>
+      <div class="me-rules-row"><span class="me-rules-label">${escapeHtml(gt("me_rules_time_limit", "制限時間"))}</span><div class="me-rules-opts" data-key="timeLimit"></div></div>
+      <div class="me-rules-row"><span class="me-rules-label">${escapeHtml(gt("me_rules_enemy_speed", "敵の出現速度"))}</span><div class="me-rules-opts" data-key="difficulty"></div></div>
     `;
     trayBody.appendChild(wrap);
     function buildOptGroup(key, options) {

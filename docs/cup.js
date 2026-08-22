@@ -74,7 +74,12 @@
     const burst = [];
     const trail = []; // fire-kick visual trail: {x,y,life}
 
-    onHint('マッチング中… 他プレイヤーを待っています');
+    // task108/MSI: this file had no i18n coverage at all until now (every onHint/canvas string
+    // was hardcoded Japanese) -- games.js defines gt() at top level (classic script, loads
+    // before this file), so it's already available globally here same as royale.js uses it.
+    function scoreStr() { return `${score.A} - ${score.B}`; }
+
+    onHint(gt('cup_hint_waiting', 'マッチング中… 他プレイヤーを待っています'));
 
     function teamSpawn(team, index, total) {
       const laneY = 60 + (index + 0.5) * ((WORLD.h - 120) / Math.max(1, total));
@@ -101,7 +106,7 @@
         recomputeHost();
         if (phase === 'lobby') {
           const n = Object.keys(channel.presenceState()).length;
-          onHint(`マッチング中… (${n}/${TEAM_SIZE * 2}人、まもなくボットで補充)`);
+          onHint(gt('cup_hint_waiting_count', 'マッチング中… ({n}/{max}人、まもなくボットで補充)').replace('{n}', n).replace('{max}', TEAM_SIZE * 2));
         }
         Object.keys(remote).forEach((id) => { if (!channel.presenceState()[id]) delete remote[id]; });
       })
@@ -139,7 +144,7 @@
         }
       })
       .on('broadcast', { event: 'goal' }, ({ payload }) => {
-        if (payload && payload.score) { score = payload.score; onHint((payload.team === myTeam ? '🎉 ゴール！' : '😢 失点…') + ` ${score.A} - ${score.B}`); }
+        if (payload && payload.score) { score = payload.score; onHint((payload.team === myTeam ? gt('cup_hint_goal_mine', '🎉 ゴール！ {score}') : gt('cup_hint_goal_theirs', '😢 失点… {score}')).replace('{score}', scoreStr())); }
       })
       .on('broadcast', { event: 'matchend' }, ({ payload }) => {
         if (!payload) return;
@@ -188,7 +193,7 @@
         // enough on its own since teams must agree before first send -- simplest fix: everyone
         // deterministically recomputes the same team from presence join order, so no broadcast
         // round-trip is needed for team assignment itself.
-        onHint(`試合開始！ (${bots.length}体のボットを含む${TEAM_SIZE}vs${TEAM_SIZE})`);
+        onHint(gt('cup_hint_start_bots', '試合開始！ ({bots}体のボットを含む{matchup})').replace('{bots}', bots.length).replace('{matchup}', `${TEAM_SIZE}vs${TEAM_SIZE}`));
       } else {
         const state = channel.presenceState();
         const realIds = Object.keys(state).sort((a, b) => {
@@ -198,7 +203,7 @@
         });
         const idx = realIds.indexOf(myId);
         myTeam = idx % 2 === 0 ? 'A' : 'B';
-        onHint('試合開始！');
+        onHint(gt('cup_hint_start', '試合開始！'));
       }
       const spawn = teamSpawn(myTeam, 0, 1);
       me.x = spawn.x; me.y = spawn.y;
@@ -226,7 +231,7 @@
     }
     function onScoreEvent(team) {
       channel.send({ type: 'broadcast', event: 'goal', payload: { team, score } });
-      onHint((team === myTeam ? '🎉 ゴール！' : '😢 失点…') + ` ${score.A} - ${score.B}`);
+      onHint((team === myTeam ? gt('cup_hint_goal_mine', '🎉 ゴール！ {score}') : gt('cup_hint_goal_theirs', '😢 失点… {score}')).replace('{score}', scoreStr()));
       sfx[team === myTeam ? 'win' : 'bad']();
       ball = { x: WORLD.w / 2, y: WORLD.h / 2, vx: 0, vy: 0 };
     }
@@ -235,9 +240,9 @@
       phase = 'done';
       const iWon = myTeam && score[myTeam] > score[myTeam === 'A' ? 'B' : 'A'];
       const draw = score.A === score.B;
-      if (draw) onHint(`🤝 引き分け ${score.A} - ${score.B}`);
-      else if (iWon) { onScore(score[myTeam]); onHint(`🏆 勝利！ ${score.A} - ${score.B}`); sfx.win(); }
-      else { onHint(`タップでもう一度マッチングする ${score.A} - ${score.B}`); sfx.gameover(); }
+      if (draw) onHint(gt('cup_hint_draw', '🤝 引き分け {score}').replace('{score}', scoreStr()));
+      else if (iWon) { onScore(score[myTeam]); onHint(gt('cup_hint_win', '🏆 勝利！ {score}').replace('{score}', scoreStr())); sfx.win(); }
+      else { onHint(gt('cup_hint_lose_retry', 'タップでもう一度マッチングする {score}').replace('{score}', scoreStr())); sfx.gameover(); }
     }
 
     // ---------------- input ----------------
@@ -411,18 +416,23 @@
         if (!b.team) return;
         drawPlayer(b.x, b.y, b.team, b.name || null);
       });
-      if (myTeam) drawPlayer(me.x, me.y, myTeam, 'あなた');
+      if (myTeam) drawPlayer(me.x, me.y, myTeam, gt('label_you', 'あなた'));
 
       const [ballX, ballY] = toScreen(ball.x, ball.y);
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(ballX, ballY, BALL_RADIUS * scale, 0, Math.PI * 2); ctx.fill();
       drawBurst(ctx, burst, dt);
 
+      // y=108/128 (not the top corner) so this HUD clears the app's own fixed #user-bar/
+      // .score-badge overlays (see style.css) -- same fix as games.js's HUD_H / royale.js.
       ctx.fillStyle = '#fff'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText(`${score.A} - ${score.B}`, canvas.width / 2, 44);
+      ctx.fillText(scoreStr(), canvas.width / 2, 108);
       ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
       const remainSec = phase === 'playing' ? Math.max(0, Math.ceil((matchEndAt - performance.now()) / 1000)) : null;
-      ctx.fillText(phase === 'lobby' ? 'マッチング中…' : phase === 'playing' ? `残り${remainSec}秒 / あなた:${myTeam}チーム` : '試合終了', 10, 40);
+      const statusText = phase === 'lobby' ? gt('cup_matching', 'マッチング中…')
+        : phase === 'playing' ? gt('cup_remaining', '残り{sec}秒 / あなた:{team}チーム').replace('{sec}', remainSec).replace('{team}', myTeam)
+        : gt('cup_match_over', '試合終了');
+      ctx.fillText(statusText, 10, 128);
     });
 
     return () => {

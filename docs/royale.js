@@ -343,14 +343,16 @@
         drawEntity(pos.x, pos.y, r.color, (r.hp ?? HP_MAX) / HP_MAX, null, r.alive);
       });
       (isHost ? bots : Object.values(remoteBots)).forEach((b) => {
-        drawEntity(b.x, b.y, b.color, (b.hp ?? HP_MAX) / HP_MAX, b.name || 'ボット', b.alive);
+        drawEntity(b.x, b.y, b.color, (b.hp ?? HP_MAX) / HP_MAX, b.name || gt('label_bot_fallback', 'ボット'), b.alive);
       });
-      drawEntity(me.x, me.y, myColor, me.hp / HP_MAX, 'あなた' + (performance.now() < buffUntil ? '⚡' : ''), me.alive);
+      drawEntity(me.x, me.y, myColor, me.hp / HP_MAX, gt('label_you', 'あなた') + (performance.now() < buffUntil ? '⚡' : ''), me.alive);
       drawBurst(ctx, burst, dt);
 
+      // y=100 (not the top-left corner) so this HUD line clears the app's own fixed
+      // #user-bar/.score-badge overlays (see style.css) -- same fix as games.js's HUD_H.
       ctx.fillStyle = '#fff'; ctx.font = '13px sans-serif'; ctx.textAlign = 'left';
       const survivors = aliveRealIds().length + aliveBotList().length;
-      ctx.fillText(phase === 'lobby' ? gt('royale_matching', 'マッチング中…') : gt('royale_survivors', '生存: {n}人').replace('{n}', survivors), 10, 40);
+      ctx.fillText(phase === 'lobby' ? gt('royale_matching', 'マッチング中…') : gt('royale_survivors', '生存: {n}人').replace('{n}', survivors), 10, 100);
     });
 
     return () => {

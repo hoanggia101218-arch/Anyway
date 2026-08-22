@@ -11,6 +11,12 @@
 (function () {
   const CELL = window.MAZE_CELL;
 
+  function gt(key, fallback) {
+    if (!window.I18N) return fallback;
+    const v = window.I18N.t(key);
+    return v === key ? fallback : v;
+  }
+
   function idx(cols, x, y) { return y * cols + x; }
 
   function blankLayout(cols, rows) {
@@ -80,14 +86,14 @@
 
     const backBtn = document.createElement('button');
     backBtn.className = 'mz-back';
-    backBtn.textContent = '← マップ選択に戻る';
+    backBtn.textContent = gt('maze_back_to_selector', '← マップ選択に戻る');
     backBtn.addEventListener('click', () => { if (onBack) onBack(); });
     root.appendChild(backBtn);
 
     const hint = document.createElement('div');
     hint.className = 'mz-hint';
     hint.style.whiteSpace = 'pre-line';
-    hint.textContent = 'マス目をタップ/ドラッグしてコースを作ろう\nスタート🚩とゴール🏁は必ず1つずつ';
+    hint.textContent = gt('maze_hint_draw', 'マス目をタップ/ドラッグしてコースを作ろう\nスタート🚩とゴール🏁は必ず1つずつ');
     root.appendChild(hint);
 
     const stage = document.createElement('div');
@@ -185,14 +191,14 @@
 
     const confirmBtn = document.createElement('button');
     confirmBtn.className = 'mz-confirm';
-    confirmBtn.textContent = 'このコースで投稿する →';
+    confirmBtn.textContent = gt('maze_confirm_post', 'このコースで投稿する →');
     tray.appendChild(confirmBtn);
 
     function updateConfirm() {
       const hasStart = cells.includes(CELL.START);
       const hasGoal = cells.includes(CELL.GOAL);
       confirmBtn.disabled = !(hasStart && hasGoal);
-      note.textContent = (hasStart && hasGoal) ? '' : 'スタート🚩とゴール🏁を1つずつ置いてください';
+      note.textContent = (hasStart && hasGoal) ? '' : gt('maze_note_need_start_goal', 'スタート🚩とゴール🏁を1つずつ置いてください');
     }
     confirmBtn.addEventListener('click', () => {
       if (confirmBtn.disabled) return;
