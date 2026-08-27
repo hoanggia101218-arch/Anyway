@@ -580,9 +580,9 @@ async function initFeed(user) {
   const feed = document.getElementById('feed');
   const userBar = document.getElementById('user-bar');
   function renderUserBar() {
-    const t55 = window.I18N ? window.I18N.t : (k) => ({ login_cta: 'ログイン', switch_account_btn: '切替' }[k] || k);
+    const t55 = window.I18N ? window.I18N.t : (k) => ({ login_cta: 'ログイン', switch_account_btn: '切替', guest_display_name: 'ゲスト' }[k] || k);
     if (user.isGuest) {
-      userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span>ゲスト <button id="login-cta-btn" class="login-cta">${escapeHtml(t55('login_cta'))}</button>`;
+      userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span>${escapeHtml(t55('guest_display_name'))} <button id="login-cta-btn" class="login-cta">${escapeHtml(t55('login_cta'))}</button>`;
       document.getElementById('login-cta-btn').addEventListener('click', () => location.reload());
     } else {
       userBar.innerHTML = `<span class="avatar" style="background:${user.color}"></span><span class="user-handle">@${escapeHtml(user.handle || user.name)}</span> <span class="coin-badge" id="coin-badge">🪙${user.coins || 0}</span> <button id="switch-account-btn">${escapeHtml(t55('switch_account_btn'))}</button>`;
@@ -763,8 +763,7 @@ async function initFeed(user) {
         }
         refreshDmBadge();
         const dmPanelOpen = !document.getElementById('dm-panel').classList.contains('hidden');
-        const onListView = document.getElementById('dm-panel-title').textContent === 'メッセージ';
-        if (dmPanelOpen && onListView) renderDmPanel();
+        if (dmPanelOpen && dmPanelView === 'list') renderDmPanel();
       })
       .subscribe();
   }
@@ -933,7 +932,7 @@ async function initFeed(user) {
       <div class="hint-text"></div>
       <div class="overlay-bottom">
         <div class="title">${escapeHtml(customTitle || def.title)}</div>
-        <div class="creator">${creatorName ? `@${escapeHtml(creatorName)} ・ リミックス` : (window.I18N ? window.I18N.t('official_creator') : 'Anyway公式')}</div>
+        <div class="creator">${creatorName ? `@${escapeHtml(creatorName)} ・ ${escapeHtml(window.I18N ? window.I18N.t('card_remix_label') : 'リミックス')}` : (window.I18N ? window.I18N.t('official_creator') : 'Anyway公式')}</div>
       </div>
       <div class="side-actions">
         ${['aim', ...OPEN_DUEL_GAME_IDS].includes(def.id) ? `<div style="text-align:center;"><button class="duel-btn">⚔️</button></div>` : ''}
@@ -1011,7 +1010,7 @@ async function initFeed(user) {
       shareCounts[def.id] = (shareCounts[def.id] || 0) + 1;
       document.querySelectorAll(`.card[data-game-id="${def.id}"] .share-count`).forEach((el) => { el.textContent = shareCounts[def.id]; });
       if (navigator.share) {
-        navigator.share({ title: `Anyway - ${def.title}`, text: `${def.title}を遊んでみて！` }).catch(() => {});
+        navigator.share({ title: `Anyway - ${def.title}`, text: t55cc2('share_text').replace('{title}', def.title) }).catch(() => {});
       }
       await sb.from('shares').insert({ user_id: user.id, game_id: def.id });
     });
@@ -1141,7 +1140,10 @@ async function initFeed(user) {
     row.appendChild(grid);
 
     let selected = [...initialValues];
-    function updateCount() { countEl.textContent = `${selected.length} / ${param.count} 選択中`; }
+    function updateCount() {
+      const template = window.I18N ? window.I18N.t('param_selected_count') : '{n} / {count} 選択中';
+      countEl.textContent = template.replace('{n}', selected.length).replace('{count}', param.count);
+    }
 
     param.options.forEach((opt) => {
       const b = document.createElement('button');
@@ -1172,12 +1174,60 @@ async function initFeed(user) {
     body.innerHTML = '';
     const wrap = document.createElement('div');
     wrap.className = 'map-browser';
-    const total = MAP_DEFS.length + 1;
+    const total = MAP_DEFS.length + 2;
     wrap.appendChild(buildMazeDrawCard(0, total));
     MAP_DEFS.forEach((map, i) => {
       wrap.appendChild(buildMapCard(map, i + 1, total));
     });
+    wrap.appendChild(buildOtherGamesCard(MAP_DEFS.length + 1, total));
     body.appendChild(wrap);
+  }
+
+  // task108 (MSI, 2026-08-22): found that renderCreatePanel only ever offered 'mymaze' or the
+  // royale/cup 3D map flow -- every other GAME_DEFS entry (dodge/memory/flap/slide/stack/aim/
+  // merge/fillitall/skyduel/spiritshop/runner/spiral/hex/flow/marble/fort/trail, 17 games) had
+  // NO create-flow path at all, so a first post of any of them could never be made by a real
+  // user (only reachable by remixing an already-existing post -- and none existed yet for the
+  // newly added hex/flow/marble/fort/trail). `.template-grid`/`.template-item` in style.css was
+  // already fully built for exactly this but never wired to any JS (grepped 0 matches project-
+  // wide) -- wiring it up here rather than inventing new markup/CSS.
+  const GENRE_ICON = { 'アクション': '🎮', 'パズル': '🧩', 'タイミング': '⏱️', '記憶': '🧠' };
+  // 2026-08-23 (MSI, user request): per-game icons so the list reads at a glance instead of
+  // every puzzle/action game sharing one generic genre emoji. Only overrides where a distinct
+  // icon meaningfully helps recognition; anything not listed here still falls back to
+  // GENRE_ICON[def.genre] below (unchanged behavior for games not worth a bespoke icon).
+  const GAME_ICON = {
+    dodge: '🚧', memory: '🎴', flap: '🐦', slide: '💠', stack: '🗼', aim: '🎯', merge: '🔮',
+    fillitall: '🖌️', skyduel: '✈️', spiritshop: '🏪', runner: '🏃',
+    hex: '🔷', flow: '🧪', marble: '⚪', fort: '🏰', trail: '🐾',
+  };
+  const NO_MAP_FLOW_IDS = new Set(['mymaze', 'royale', 'cup', 'trapdojo']);
+  function buildOtherGamesCard(index, total) {
+    const t55og = window.I18N ? window.I18N.t : (k) => k;
+    const card = document.createElement('div');
+    card.className = 'map-card';
+    card.innerHTML = `
+      <div class="map-card-pos">${index + 1} / ${total}</div>
+      <h2 class="map-card-name">${escapeHtml(t55og('map_other_games_title'))}</h2>
+      <p class="map-card-tagline">${escapeHtml(t55og('map_other_games_tagline'))}</p>
+    `;
+    const grid = document.createElement('div');
+    grid.className = 'template-grid';
+    grid.style.marginTop = '14px';
+    GAME_DEFS.filter((def) => !NO_MAP_FLOW_IDS.has(def.id)).forEach((def) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'template-item';
+      item.innerHTML = `
+        <div class="template-icon">${GAME_ICON[def.id] || GENRE_ICON[def._jaGenre || def.genre] || '🎮'}</div>
+        <div class="template-title">${escapeHtml(def.title)}</div>
+        <div class="template-genre">${escapeHtml(def.genre)}</div>
+      `;
+      item.addEventListener('click', () => renderCreateForm(def));
+      grid.appendChild(item);
+    });
+    card.appendChild(grid);
+    return card;
   }
 
   // First card in the create flow: a 2D grid course you draw yourself (window.MazeEditor),
@@ -1185,22 +1235,23 @@ async function initFeed(user) {
   // entry (games.js's mountMyMaze), one config.layout per post -- no character selection step,
   // since this is a solo obstacle course, not a battle.
   function buildMazeDrawCard(index, total) {
+    const t55md = window.I18N ? window.I18N.t : (k) => k;
     const card = document.createElement('div');
     card.className = 'map-card';
     card.innerHTML = `
       <div class="map-card-pos">${index + 1} / ${total}</div>
-      <h2 class="map-card-name">🎨 自分でコースを描く</h2>
-      <p class="map-card-tagline">マス目に壁・危険・スタート・ゴールを置いて、自分だけの2Dコースを作ろう</p>
+      <h2 class="map-card-name">${escapeHtml(t55md('map_draw_title'))}</h2>
+      <p class="map-card-tagline">${escapeHtml(t55md('map_draw_tagline'))}</p>
       <div class="map-photo-carousel">
-        <div class="map-photo-tile" style="background:linear-gradient(135deg,#20222a,#31d158 40%,#ffd23f 100%);"><span>グリッドでコースを描く</span></div>
+        <div class="map-photo-tile" style="background:linear-gradient(135deg,#20222a,#31d158 40%,#ffd23f 100%);"><span>${escapeHtml(t55md('map_draw_grid_label'))}</span></div>
       </div>
-      <p class="panel-note small" style="margin:14px 0 6px;">マス目の意味</p>
+      <p class="panel-note small" style="margin:14px 0 6px;">${escapeHtml(t55md('map_draw_meaning_label'))}</p>
       <ul class="map-feature-list">
-        <li>🧱 壁: 通れない</li>
-        <li>🔥 危険: 触れるとライフが減る</li>
-        <li>🚩 スタート / 🏁 ゴール: それぞれ1つずつ</li>
+        <li>${escapeHtml(t55md('map_draw_wall'))}</li>
+        <li>${escapeHtml(t55md('map_draw_hazard'))}</li>
+        <li>${escapeHtml(t55md('map_draw_start_goal'))}</li>
       </ul>
-      <button class="post-btn maze-draw-btn">描きはじめる</button>
+      <button class="post-btn maze-draw-btn">${escapeHtml(t55md('map_draw_start_btn'))}</button>
     `;
     card.querySelector('.maze-draw-btn').addEventListener('click', () => renderMazeEditorScreen());
     return card;
@@ -1228,25 +1279,37 @@ async function initFeed(user) {
       : `background:${photo.color};`;
   }
 
+  // task108 (MSI, 2026-08-25): map.name/tagline/features/history/photos[].label were rendered
+  // straight from maps.js -- pure Japanese literals with no i18n path at all -- even though
+  // this map browser is shown to every user creating a royale/cup post. Added map_<id>_* keys
+  // to i18n.js (8 languages) and route every field through gt(key, fallback) here, same lazy-
+  // evaluation pattern as maze-editor.js/map-editor.js: falls back to the maps.js literal if a
+  // key is ever missing, so this can never regress to showing a raw key name.
   function buildMapCard(map, index, total) {
+    const t55mc = window.I18N ? window.I18N.t : (k) => k;
+    const mName = gt(`map_${map.id}_name`, map.name);
+    const mTagline = gt(`map_${map.id}_tagline`, map.tagline);
+    const mHistory = gt(`map_${map.id}_history`, map.history);
+    const photoLabel = (i2) => gt(`map_${map.id}_photo_${i2 + 1}`, map.photos[i2].label);
+    const featureText = (f, i2) => gt(`map_${map.id}_feature_${i2 + 1}`, f);
     const card = document.createElement('div');
     card.className = 'map-card';
     card.innerHTML = `
       <div class="map-card-pos">${index + 1} / ${total}</div>
-      <h2 class="map-card-name">${escapeHtml(map.name)}</h2>
-      ${map.tagline ? `<p class="map-card-tagline">${escapeHtml(map.tagline)}</p>` : ''}
+      <h2 class="map-card-name">${escapeHtml(mName)}</h2>
+      ${mTagline ? `<p class="map-card-tagline">${escapeHtml(mTagline)}</p>` : ''}
       <div class="map-photo-carousel">
-        <div class="map-photo-tile" style="${mapPhotoBgStyle(map.photos[0])}"><span>${escapeHtml(map.photos[0].label)}</span></div>
-        <button type="button" class="map-photo-nav prev" aria-label="前の写真"></button>
-        <button type="button" class="map-photo-nav next" aria-label="次の写真"></button>
+        <div class="map-photo-tile" style="${mapPhotoBgStyle(map.photos[0])}"><span>${escapeHtml(photoLabel(0))}</span></div>
+        <button type="button" class="map-photo-nav prev" aria-label="${escapeHtml(t55mc('map_photo_prev'))}"></button>
+        <button type="button" class="map-photo-nav next" aria-label="${escapeHtml(t55mc('map_photo_next'))}"></button>
       </div>
       <div class="map-photo-dots">
         ${map.photos.map((_, i2) => `<span class="map-photo-dot${i2 === 0 ? ' active' : ''}"></span>`).join('')}
       </div>
-      <p class="panel-note small" style="margin-bottom:6px;">マップの特徴</p>
-      <ul class="map-feature-list">${map.features.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}</ul>
-      <p class="map-card-history">${escapeHtml(map.history)}</p>
-      <button class="post-btn map-select-btn">選択</button>
+      <p class="panel-note small" style="margin-bottom:6px;">${escapeHtml(t55mc('map_features_label'))}</p>
+      <ul class="map-feature-list">${map.features.map((f, i2) => `<li>${escapeHtml(featureText(f, i2))}</li>`).join('')}</ul>
+      <p class="map-card-history">${escapeHtml(mHistory)}</p>
+      <button class="post-btn map-select-btn">${escapeHtml(t55mc('map_select_btn'))}</button>
     `;
     const tile = card.querySelector('.map-photo-tile');
     let photoIdx = 0;
@@ -1254,7 +1317,7 @@ async function initFeed(user) {
       photoIdx = (i2 + map.photos.length) % map.photos.length;
       const p = map.photos[photoIdx];
       tile.style.cssText = mapPhotoBgStyle(p);
-      tile.querySelector('span').textContent = p.label;
+      tile.querySelector('span').textContent = photoLabel(photoIdx);
       card.querySelectorAll('.map-photo-dot').forEach((d, di) => d.classList.toggle('active', di === photoIdx));
     }
     card.querySelector('.map-photo-nav.prev').addEventListener('click', () => showPhoto(photoIdx - 1));
@@ -1275,25 +1338,30 @@ async function initFeed(user) {
   // ready (task74's royale.js), カップ isn't built yet so it's shown disabled/"準備中" — matching
   // the "選ばないと次へ進めない" requirement via a disabled "次へ" button until a ready rule is
   // picked, same interaction model DELL described.
-  const RULE_DEFS = [
-    { id: 'royale', title: 'エレメント・ロワイヤル', icon: '⚔️', gameId: 'royale', ready: true,
-      desc: '最大10人のバトルロイヤル。オンライン中のプレイヤーとマッチングし、足りない分はボットで補充。相手を倒すとその力を一時的に吸収してパワーアップ。' },
-    { id: 'cup', title: 'エレメント・カップ', icon: '⚽', gameId: 'cup', ready: true,
-      desc: '4vs4のサッカー。炎属性のシュートは曲がる軌道になる。' },
-  ];
+  function getRuleDefs() {
+    const t55r = window.I18N ? window.I18N.t : (k) => k;
+    return [
+      { id: 'royale', title: t55r('rule_title_royale'), icon: '⚔️', gameId: 'royale', ready: true,
+        desc: t55r('rule_desc_royale') },
+      { id: 'cup', title: t55r('rule_title_cup'), icon: '⚽', gameId: 'cup', ready: true,
+        desc: t55r('rule_desc_cup') },
+    ];
+  }
   function renderRuleSelector(map) {
+    const t55r = window.I18N ? window.I18N.t : (k) => k;
+    const RULE_DEFS = getRuleDefs();
     const body = document.getElementById('create-panel-body');
     body.innerHTML = '';
 
     const back = document.createElement('button');
     back.className = 'back-link';
-    back.textContent = '← マップ選択に戻る';
+    back.textContent = t55r('rule_back_to_maps');
     back.addEventListener('click', () => renderCreatePanel());
     body.appendChild(back);
 
     const intro = document.createElement('p');
     intro.className = 'panel-note';
-    intro.textContent = `「${map.name}」で遊ぶルールを選んでください`;
+    intro.textContent = t55r('rule_select_intro').replace('{map}', gt(`map_${map.id}_name`, map.name));
     body.appendChild(intro);
 
     const list = document.createElement('div');
@@ -1311,7 +1379,7 @@ async function initFeed(user) {
         <span class="rule-card-body">
           <span class="rule-card-title-row">
             <span class="rule-card-title">${escapeHtml(rule.title)}</span>
-            ${rule.ready ? '' : '<span class="rule-card-badge">準備中</span>'}
+            ${rule.ready ? '' : `<span class="rule-card-badge">${escapeHtml(t55r('rule_badge_coming_soon'))}</span>`}
           </span>
           <span class="rule-card-desc">${escapeHtml(rule.desc)}</span>
         </span>
@@ -1329,7 +1397,7 @@ async function initFeed(user) {
 
     const nextBtn = document.createElement('button');
     nextBtn.className = 'post-btn';
-    nextBtn.textContent = '次へ →';
+    nextBtn.textContent = t55r('rule_next_btn');
     nextBtn.disabled = true;
     nextBtn.style.margin = '4px 16px 16px';
     nextBtn.style.width = 'calc(100% - 32px)';
@@ -1368,19 +1436,25 @@ async function initFeed(user) {
       if (window.MapEditor || tries > 50) { clearInterval(iv); cb(); }
     }, 100);
   }
-  const SPIRIT_AVATARS = [
-    { id: 'blaze', name: 'ブレイズ', element: '炎', color: '#e6551a', icon: '🔥', skillLine: '炎属性', ultimateName: 'とっておきの一撃' },
-    { id: 'aqua', name: 'アクア', element: '水', color: '#0288d1', icon: '💧', skillLine: '水属性・回復サポート', ultimateName: 'とっておきの一撃' },
-    { id: 'volt', name: 'ボルト', element: '雷', color: '#e6a800', icon: '⚡', skillLine: '雷属性・高速アタッカー', ultimateName: 'とっておきの一撃' },
-    { id: 'gust', name: 'ガスト', element: '風', color: '#4c9a2a', icon: '🌪️', skillLine: '風属性・機動型アタッカー', ultimateName: 'とっておきの一撃' },
-    { id: 'terra', name: 'テラ', element: '岩', color: '#6b7a3c', icon: '🪨', skillLine: '岩属性・タンク', ultimateName: 'とっておきの一撃' },
-    { id: 'frost', name: 'フロスト', element: '氷', color: '#3d94c2', icon: '❄️', skillLine: '氷属性・妨害型アタッカー', ultimateName: 'とっておきの一撃' },
-    { id: 'light', name: 'ライト', element: '光', color: '#d9a53a', icon: '✨', skillLine: '光属性・バランス型サポーター', ultimateName: 'とっておきの一撃' },
-    { id: 'nox', name: 'ノクス', element: '闇', color: '#4a2a80', icon: '🌑', skillLine: '闇属性・奇襲型アタッカー', ultimateName: 'とっておきの一撃' },
-    { id: 'leaf', name: 'リーフ', element: '植物', color: '#4f8a2c', icon: '🌿', skillLine: '植物属性・継続回復&拘束サポーター', ultimateName: 'とっておきの一撃' },
-    { id: 'plasma', name: 'プラズマ', element: 'エネルギー', color: '#6a3fc0', icon: '🔮', skillLine: 'エネルギー属性・万能型アタッカー', ultimateName: 'とっておきの一撃' },
-  ];
+  function getSpiritAvatars() {
+    const t55s = window.I18N ? window.I18N.t : (k) => k;
+    return [
+      { id: 'blaze', name: 'ブレイズ', element: t55s('elem_fire'), color: '#e6551a', icon: '🔥', skillLine: t55s('spirit_skillline_blaze'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'aqua', name: 'アクア', element: t55s('elem_water'), color: '#0288d1', icon: '💧', skillLine: t55s('spirit_skillline_aqua'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'volt', name: 'ボルト', element: t55s('elem_thunder'), color: '#e6a800', icon: '⚡', skillLine: t55s('spirit_skillline_volt'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'gust', name: 'ガスト', element: t55s('elem_wind'), color: '#4c9a2a', icon: '🌪️', skillLine: t55s('spirit_skillline_gust'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'terra', name: 'テラ', element: t55s('elem_rock'), color: '#6b7a3c', icon: '🪨', skillLine: t55s('spirit_skillline_terra'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'frost', name: 'フロスト', element: t55s('elem_ice'), color: '#3d94c2', icon: '❄️', skillLine: t55s('spirit_skillline_frost'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'light', name: 'ライト', element: t55s('elem_light'), color: '#d9a53a', icon: '✨', skillLine: t55s('spirit_skillline_light'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'nox', name: 'ノクス', element: t55s('elem_dark'), color: '#4a2a80', icon: '🌑', skillLine: t55s('spirit_skillline_nox'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'leaf', name: 'リーフ', element: t55s('elem_plant'), color: '#4f8a2c', icon: '🌿', skillLine: t55s('spirit_skillline_leaf'), ultimateName: t55s('spirit_ultimate_name') },
+      { id: 'plasma', name: 'プラズマ', element: t55s('elem_energy'), color: '#6a3fc0', icon: '🔮', skillLine: t55s('spirit_skillline_plasma'), ultimateName: t55s('spirit_ultimate_name') },
+    ];
+  }
   function render3DSceneEditor(map, rule) {
+    const t55m3 = window.I18N ? window.I18N.t : (k) => k;
+    const mName = gt(`map_${map.id}_name`, map.name);
+    const spiritAvatars = getSpiritAvatars();
     const body = document.getElementById('create-panel-body');
     body.innerHTML = '';
     if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
@@ -1390,17 +1464,17 @@ async function initFeed(user) {
     const bgPhoto = map.photos && map.photos[0];
     waitForMapEditor(() => {
       if (!window.MapEditor) {
-        container.textContent = '3Dエディタの読み込みに失敗しました。通信状況を確認してもう一度お試しください。';
+        container.textContent = t55m3('editor3d_load_failed');
         return;
       }
       activeMapEditor = window.MapEditor.mount(container, {
-        mapName: map.name,
+        mapName: mName,
         mapPhotoUrl: bgPhoto && bgPhoto.image,
         mapColor: (bgPhoto && bgPhoto.color) || '#222',
-        characters: SPIRIT_AVATARS,
+        characters: spiritAvatars,
         onBack: () => { if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; } renderRuleSelector(map); },
         onConfirm: (charId, placements, rules) => {
-          const spirit = SPIRIT_AVATARS.find((s) => s.id === charId);
+          const spirit = spiritAvatars.find((s) => s.id === charId);
           const def = GAME_DEFS.find((g) => g.id === (rule && rule.gameId));
           if (activeMapEditor) { activeMapEditor.destroy(); activeMapEditor = null; }
           if (!def) { renderRuleSelector(map); return; }
@@ -1410,7 +1484,7 @@ async function initFeed(user) {
             items: (placements || []).filter((p) => !(p.kind === 'character' && p.id === charId)),
             rules: rules || { timeLimit: 0, difficulty: 1 },
           };
-          const titleContext = spirit ? `${map.name}・${spirit.name}` : map.name;
+          const titleContext = spirit ? `${mName}・${spirit.name}` : mName;
           renderCreateForm(def, titleContext, mapLayout);
         },
       });
@@ -1418,18 +1492,19 @@ async function initFeed(user) {
   }
 
   function renderCreateForm(def, mapName = null, mapLayout = null) {
+    const t55cf = window.I18N ? window.I18N.t : (k) => k;
     const body = document.getElementById('create-panel-body');
     body.innerHTML = '';
 
     const back = document.createElement('button');
     back.className = 'back-link';
-    back.textContent = '← テンプレート選択に戻る';
+    back.textContent = t55cf('create_back_to_template');
     back.addEventListener('click', () => renderCreatePanel());
     body.appendChild(back);
 
     const titleRow = document.createElement('div');
     titleRow.className = 'param-row';
-    titleRow.innerHTML = `<label>タイトル(自由に書き換えられます)</label><input type="text" class="create-title-input" maxlength="24">`;
+    titleRow.innerHTML = `<label>${escapeHtml(t55cf('create_title_label'))}</label><input type="text" class="create-title-input" maxlength="24">`;
     body.appendChild(titleRow);
     const titleInput = titleRow.querySelector('input');
     titleInput.value = mapName ? `【${mapName}】${def.title}` : def.title;
@@ -1454,13 +1529,13 @@ async function initFeed(user) {
     if (!(def.params && def.params.length) && !(def.choiceParams && def.choiceParams.length)) {
       const note = document.createElement('p');
       note.className = 'panel-note small';
-      note.textContent = 'このゲームには調整できる項目がありません。そのままオリジナルとして投稿できます。';
+      note.textContent = t55cf('create_no_params_note');
       body.appendChild(note);
     }
 
     const postBtn = document.createElement('button');
     postBtn.className = 'post-btn';
-    postBtn.textContent = '投稿する';
+    postBtn.textContent = t55cf('post_submit_btn');
     postBtn.addEventListener('click', () => {
       const newConfig = {};
       (def.params || []).forEach((p) => { newConfig[p.key] = Number(sliders[p.key].value); });
@@ -1473,16 +1548,17 @@ async function initFeed(user) {
   }
 
   function renderEditPanel() {
+    const t55ep = window.I18N ? window.I18N.t : (k) => k;
     const body = document.getElementById('edit-panel-body');
     body.innerHTML = '';
-    if (!activeCard) { body.innerHTML = '<p class="panel-note">ゲームを選択してください</p>'; return; }
+    if (!activeCard) { body.innerHTML = `<p class="panel-note">${escapeHtml(t55ep('edit_select_game_note'))}</p>`; return; }
     const meta = cardMeta.get(activeCard);
     const def = meta.def;
     const baseConfig = meta.config || {};
 
     const intro = document.createElement('p');
     intro.className = 'panel-note';
-    intro.textContent = `「${def.title}」をリミックスして自分の投稿として公開します。`;
+    intro.textContent = t55ep('edit_remix_intro').replace('{title}', def.title);
     body.appendChild(intro);
 
     const sliders = {};
@@ -1507,13 +1583,13 @@ async function initFeed(user) {
     if (!(def.params && def.params.length) && !(def.choiceParams && def.choiceParams.length)) {
       const note = document.createElement('p');
       note.className = 'panel-note small';
-      note.textContent = 'このゲームには調整できる項目がありません。そのまま自分の投稿として再公開できます。';
+      note.textContent = t55ep('edit_no_params_note');
       body.appendChild(note);
     }
 
     const postBtn = document.createElement('button');
     postBtn.className = 'post-btn';
-    postBtn.textContent = '投稿する';
+    postBtn.textContent = t55ep('post_submit_btn');
     postBtn.addEventListener('click', () => {
       const newConfig = {};
       (def.params || []).forEach((p) => { newConfig[p.key] = Number(sliders[p.key].value); });
@@ -2220,11 +2296,13 @@ async function initFeed(user) {
 
   // ---------- DM (Supabase-backed, realtime) ----------
   let chatChannel = null;
+  let dmPanelView = 'list';
   function closeChatChannel() {
     if (chatChannel) { sb.removeChannel(chatChannel); chatChannel = null; }
   }
 
   function renderDmPanel() {
+    dmPanelView = 'list';
     const t55d = window.I18N ? window.I18N.t : (k) => k;
     document.getElementById('dm-panel-title').textContent = t55d('dm_panel_title');
     const body = document.getElementById('dm-panel-body');
@@ -2278,6 +2356,7 @@ async function initFeed(user) {
   }
 
   function openChat(otherUser) {
+    dmPanelView = 'chat';
     const t55o = window.I18N ? window.I18N.t : (k) => k;
     document.getElementById('dm-panel-title').textContent = `@${otherUser.handle}`;
     const body = document.getElementById('dm-panel-body');

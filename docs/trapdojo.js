@@ -69,6 +69,11 @@
       [
         { x: 0, y: 230, w: 480, h: 20 },
         { x: 330, y: 110, w: 100, h: 14 },
+        // task84 第10回品質巡回で追加: 床(y230)→棚(y110)は120px差があり単発ジャンプの
+        // 最大上昇量(約65px)を超えるため、この中継足場が無いと理論上クリア不能だった
+        // (ヘッドレス全探索で確認)。fakeハザード(x150-240)とは重ならない位置・幅にして、
+        // fakeが本来の「見た目だけの床」トラップとして機能する余地を残している。
+        { x: 245, y: 170, w: 85, h: 14 },
       ],
       [
         { type: 'spike', x: 60, y: 218, w: 30, h: 12 },
@@ -102,13 +107,20 @@
     stage('hard_1', 'hard', true,
       { x: 20, y: 60 }, { x: 430, y: 40, w: 30, h: 40 },
       [
-        { x: 0, y: 100, w: 100, h: 14 },
-        { x: 380, y: 80, w: 100, h: 14 },
+        { x: 0, y: 100, w: 110, h: 14 },
+        // task84 第11回品質巡回で追加: 元のレイアウト(platform1 x0-100 → mover baseX220 →
+        // platform2 x380-480)は、moverが正弦波のどの位相にいても水平・垂直を同時に満たす
+        // 軌道が原理的に存在しない構造的な詰みだった(ヘッドレス全探索8000+反応的24000試行
+        // 全滅で確認、詳細はoutput_contrib/HP/trapdojo/README.md参照)。中継の足場を追加し
+        // 各区間の跳躍距離を最大到達距離(約104px)に対して十分な余裕(50〜80px)に収めて
+        // 再設計した。
+        { x: 180, y: 100, w: 70, h: 14 },
+        { x: 400, y: 80, w: 80, h: 14 },
       ],
       [
-        { type: 'fake', x: 130, y: 100, w: 60, h: 14 },
-        { type: 'mover', x: 220, y: 130, w: 50, h: 14, axis: 'y', amp: 60, speed: 0.9, baseY: 130, baseX: 220 },
-        { type: 'faller', x: 320, y: 30, w: 24, h: 24, cycle: 2200, telegraph: 450, fallDur: 650, restY: 30 },
+        { type: 'fake', x: 110, y: 100, w: 60, h: 14 },
+        { type: 'mover', x: 300, y: 120, w: 50, h: 14, axis: 'y', amp: 15, speed: 1.6, baseY: 120, baseX: 300 },
+        { type: 'faller', x: 400, y: 30, w: 24, h: 24, cycle: 2200, telegraph: 450, fallDur: 650, restY: 30 },
         { type: 'spike', x: 0, y: KILL_Y - 6, w: 480, h: 6 },
       ]),
     stage('hard_2', 'hard', false,
@@ -118,10 +130,13 @@
         { x: 390, y: 230, w: 90, h: 20 },
       ],
       [
-        { type: 'vanish', x: 90, y: 230, w: 90, h: 20, cycle: 1600, onFrac: 0.45, phase: 0 },
+        // task84 第12回品質巡回で調整: onFrac 0.45は横断的マージン監査で8101試行
+        // (反応的方策でようやく発見)という薄マージンだった。hard_1/hard_12の是正と
+        // 同じ手法(onFracを緩める)で健全化。1257試行まで改善(ヘッドレス検証済み)。
+        { type: 'vanish', x: 90, y: 230, w: 90, h: 20, cycle: 1600, onFrac: 0.6, phase: 0 },
         { type: 'spike', x: 180, y: 218, w: 30, h: 12 },
         { type: 'mover', x: 240, y: 190, w: 50, h: 14, axis: 'x', amp: 40, speed: 1.6, baseY: 190, baseX: 240 },
-        { type: 'vanish', x: 300, y: 230, w: 90, h: 20, cycle: 1600, onFrac: 0.45, phase: 800 },
+        { type: 'vanish', x: 300, y: 230, w: 90, h: 20, cycle: 1600, onFrac: 0.6, phase: 800 },
       ]),
     stage('hard_3', 'hard', false,
       { x: 20, y: 60 }, { x: 430, y: 190, w: 30, h: 40 },
@@ -225,7 +240,10 @@
     p.vx = input.dx * MOVE_SPEED;
     p.x += p.vx * dt;
     for (const s of solids) {
-      const box = { x: p.x, y: p.y, w: PLAYER_W, h: PLAYER_H };
+      // task84 第13回品質巡回: 縦方向を2pxずつ内側に狭めてから水平衝突判定する。
+      // 静止/着地時の極小な垂直めり込み(浮動小数点誤差)が水平衝突として誤判定され
+      // moverの正弦波ピーク付近でプレイヤーが後方に弾き飛ばされるバグ(第8回巡回で発見)の修正。
+      const box = { x: p.x, y: p.y + 2, w: PLAYER_W, h: PLAYER_H - 4 };
       if (rectsOverlap(box, s)) {
         if (p.vx > 0) p.x = s.x - PLAYER_W;
         else if (p.vx < 0) p.x = s.x + s.w;
@@ -338,11 +356,11 @@
     const el = document.createElement('div');
     el.style.cssText = 'position:absolute;inset:0;background:rgba(10,10,14,0.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:14px;z-index:10;';
     el.innerHTML = `
-      <div style="color:#fff;font-weight:700;font-size:15px;">⚔️ トラップ道場</div>
+      <div style="color:#fff;font-weight:700;font-size:15px;">⚔️ ${gt('trapdojo_select_title', 'トラップ道場')}</div>
       <div id="td-swatches" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;"></div>
       <div style="display:flex;gap:8px;">
-        <button id="td-solo" class="primary" style="padding:10px 14px;border-radius:12px;">ひとりで</button>
-        <button id="td-coop" class="primary" style="padding:10px 14px;border-radius:12px;">みんなで(最大4人)</button>
+        <button id="td-solo" class="primary" style="padding:10px 14px;border-radius:12px;">${gt('trapdojo_solo_btn', 'ひとりで')}</button>
+        <button id="td-coop" class="primary" style="padding:10px 14px;border-radius:12px;">${gt('trapdojo_coop_btn', 'みんなで(最大4人)')}</button>
       </div>
     `;
     container.appendChild(el);
@@ -418,7 +436,16 @@
       // y=100 (not the top-left corner) so this HUD clears the app's own fixed #user-bar/
       // .score-badge overlays (see style.css) -- same fix applied to games.js/royale.js/cup.js.
       ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(`${stg.difficulty} ${stageIdx + 1}/${stages.length}　クリア数: ${cleared}`, 8, 100);
+      // task108 (MSI, 2026-08-23): was hardcoded `${stg.difficulty} ... クリア数: ...` with no
+      // gt() call at all -- found via a real device screenshot showing "easy 1/9 クリア数: 0"
+      // rendered untranslated even with the app's language set to Vietnamese. `gt` is games.js's
+      // global i18n helper (games.js loads before this file, and this IIFE can still read it off
+      // the shared global scope same as sfx/makeCanvas/spawnBurst already are). Reuses the
+      // existing diff_easy/normal/hard/expert/master keys (already defined for FillItAll's HUD,
+      // same difficulty tier names) rather than adding new ones.
+      const diffLabel = gt('diff_' + stg.difficulty, stg.difficulty);
+      const clearedLabel = gt('trapdojo_cleared_count', 'クリア数');
+      ctx.fillText(`${diffLabel} ${stageIdx + 1}/${stages.length}　${clearedLabel}: ${cleared}`, 8, 100);
     });
 
     return () => {
@@ -594,7 +621,9 @@
       }
       // Same #user-bar/.score-badge overlap fix as the solo-mode HUD above.
       ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(`協力プレイ ${stg.difficulty} (${finishers.size}/${Math.max(1, Object.keys(channel.presenceState()).length)}人ゴール)`, 8, 100);
+      // task108 (MSI, 2026-08-23): same untranslated-HUD bug as the solo HUD above, fixed the
+      // same way (reuses diff_* + a new trapdojo_coop_label/trapdojo_goal_suffix pair).
+      ctx.fillText(`${gt('trapdojo_coop_label', '協力プレイ')} ${gt('diff_' + stg.difficulty, stg.difficulty)} (${finishers.size}/${Math.max(1, Object.keys(channel.presenceState()).length)}${gt('trapdojo_goal_suffix', '人ゴール')})`, 8, 100);
     });
 
     return () => {

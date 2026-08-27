@@ -58,6 +58,17 @@
     const canvas = makeCanvas(container);
     const ctx = canvas.getContext('2d');
 
+    // task108 (MSI, 2026-08-23, user-reported): same fix as royale.js -- the map picked during
+    // post creation (render3DSceneEditor in app.js) was never read back here, so every match
+    // rendered the same flat pitch color no matter which Season 1 map the poster chose.
+    const mapBgColor = (config.mapLayout && config.mapLayout.color) || '#0e3d1a';
+    let mapBgImg = null, mapBgReady = false;
+    if (config.mapLayout && config.mapLayout.photoUrl) {
+      mapBgImg = new Image();
+      mapBgImg.onload = () => { mapBgReady = true; };
+      mapBgImg.src = config.mapLayout.photoUrl;
+    }
+
     let myTeam = null; // 'A' | 'B', assigned once the lobby resolves
     const me = { x: 0, y: 0, angle: 0 };
     let phase = 'lobby'; // 'lobby' -> 'playing' -> 'done'
@@ -387,6 +398,13 @@
       // ---------------- render ----------------
       ctx.fillStyle = '#0e3d1a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
       const [bx, by, scale] = toScreen(0, 0);
+      ctx.fillStyle = mapBgColor; ctx.fillRect(bx, by, WORLD.w * scale, WORLD.h * scale);
+      if (mapBgReady) {
+        ctx.save();
+        ctx.globalAlpha = 0.5; // dimmed so the pitch lines/goals/players stay readable on top
+        ctx.drawImage(mapBgImg, bx, by, WORLD.w * scale, WORLD.h * scale);
+        ctx.restore();
+      }
       ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2;
       ctx.strokeRect(bx, by, WORLD.w * scale, WORLD.h * scale);
       // goal mouths

@@ -29,7 +29,15 @@
   const LOBBY_WAIT_MS = 6000; // how long the host waits for real players before bot-filling
   const TARGET_PLAYERS = 6;
   const HP_MAX = 100;
-  const ATTACK_RANGE = 72;
+  // task108 (MSI, 2026-08-24, user request: "当たり判定が曖昧"): was 72 against a 15px-radius
+  // drawn player circle (ctx.arc(..., 15 * scale, ...) below) -- 4.8x the visible sprite radius,
+  // so hits registered (both landing on the opponent and receiving a hit) while the two circles
+  // were still ~42px apart on screen, well outside anything that reads as contact. 42 = 15+15
+  // (both player radii, i.e. sprite edges just touching) + 12 (a melee swing/weapon reach beyond
+  // bare-body contact, matching cup.js's KICK_RANGE+BALL_RADIUS=44 reach-beyond-body-radius
+  // precedent) so a hit now visually corresponds to the attacker being right up against the
+  // defender, not several character-widths away.
+  const ATTACK_RANGE = 42;
   const ATTACK_COOLDOWN_MS = 650;
   const ATTACK_DAMAGE = 18;
   const BUFF_DURATION_MS = 4000;
@@ -54,6 +62,21 @@
 
     const canvas = makeCanvas(container);
     const ctx = canvas.getContext('2d');
+
+    // task108 (MSI, 2026-08-23, user-reported): the post-creation flow (render3DSceneEditor in
+    // app.js) lets the poster pick one of the real rendered Season 1 maps and shows its photo the
+    // whole time they're placing characters/rules -- but this file never read that choice back,
+    // so every actual match rendered the same flat #14151a regardless of which map was selected.
+    // config.mapLayout.{photoUrl,color} is exactly what render3DSceneEditor already attaches to
+    // the post; drawing it here (dimmed, so HUD/entities stay legible) is what makes "the map you
+    // picked" and "the map you're actually fighting on" the same thing again.
+    const mapBgColor = (config.mapLayout && config.mapLayout.color) || '#14151a';
+    let mapBgImg = null, mapBgReady = false;
+    if (config.mapLayout && config.mapLayout.photoUrl) {
+      mapBgImg = new Image();
+      mapBgImg.onload = () => { mapBgReady = true; };
+      mapBgImg.src = config.mapLayout.photoUrl;
+    }
 
     const me = { x: randRange(60, WORLD.w - 60), y: randRange(60, WORLD.h - 60), angle: 0, hp: HP_MAX, alive: true };
     let lastAttacker = null; // who hit me most recently, for kill-credit on my own death
@@ -332,6 +355,13 @@
       // ---------------- render ----------------
       ctx.fillStyle = '#14151a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
       const [bx, by, scale] = toScreen(0, 0);
+      ctx.fillStyle = mapBgColor; ctx.fillRect(bx, by, WORLD.w * scale, WORLD.h * scale);
+      if (mapBgReady) {
+        ctx.save();
+        ctx.globalAlpha = 0.55; // dimmed so player/bot entities and the HUD stay readable on top
+        ctx.drawImage(mapBgImg, bx, by, WORLD.w * scale, WORLD.h * scale);
+        ctx.restore();
+      }
       ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2;
       ctx.strokeRect(bx, by, WORLD.w * scale, WORLD.h * scale);
 

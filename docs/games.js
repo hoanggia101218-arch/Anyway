@@ -14,6 +14,18 @@ function gt(key, fallback) {
   return v === key ? fallback : v;
 }
 
+// task108 (MSI, 2026-08-23): canvas-drawn UI can't use CSS env()/calc(), so this reads the
+// --safe-bottom custom property (style.css :root, itself `env(safe-area-inset-bottom, 0px)`)
+// that DOM-positioned controls (.dpad etc.) already consume via calc(). Used by mountFort/
+// mountSpiritShop so their own bottom-anchored rows clear #bottom-nav on real devices with a
+// home-indicator safe area the same way the DOM controls now do (see style.css :root comment --
+// found via a real iPhone screenshot; headless verification can't reproduce this since
+// env(safe-area-inset-bottom) is always 0px with no device to emulate a safe area from).
+function getSafeBottom() {
+  const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--safe-bottom'));
+  return Number.isFinite(v) ? v : 0;
+}
+
 function makeCanvas(container) {
   const c = document.createElement('canvas');
   c.width = container.clientWidth;
@@ -130,9 +142,14 @@ const sfx = {
 };
 
 // Flashes a canvas/element brighter for a beat — cheap "hit stop" feedback with no new DOM.
+// Tracks a per-element token so an overlapping call (e.g. a cascade merge landing mid-flash)
+// extends the flash instead of getting its filter wiped early by the FIRST call's timeout --
+// measured: without this, two flashEl() calls 30ms apart went dark at ~90ms instead of ~120ms,
+// reading as a flicker/stutter rather than one sustained flash during dense combo cascades.
 function flashEl(el, ms = 120) {
   el.style.filter = 'brightness(1.6) saturate(1.3)';
-  setTimeout(() => { el.style.filter = ''; }, ms);
+  const token = (el._flashToken = (el._flashToken || 0) + 1);
+  setTimeout(() => { if (el._flashToken === token) el.style.filter = ''; }, ms);
 }
 
 // Quick CSS scale-pop on a DOM cell for a success moment — no new elements, just a transform pulse.
@@ -183,7 +200,7 @@ function makeCombo(resetMs = 1800) {
       count = (now - lastT < resetMs) ? count + 1 : 1;
       lastT = now;
       sfx.score(count);
-      if (onHint && count >= 3 && count % 3 === 0) onHint(`🔥 ${count}連続！`);
+      if (onHint && count >= 3 && count % 3 === 0) onHint(gt('hint_combo_streak', '🔥 {n}連続！').replace('{n}', count));
       return count;
     },
     miss() { count = 0; sfx.bad(); },
@@ -199,7 +216,7 @@ function makeBestTracker(id, onHint) {
     if (score > best) {
       best = score;
       localStorage.setItem('anyway_best_' + id, String(best));
-      if (!announced) { announced = true; if (onHint) onHint(`🏆 自己ベスト更新！ ${score}`); }
+      if (!announced) { announced = true; if (onHint) onHint(gt('hint_best_update', '🏆 自己ベスト更新！ {n}').replace('{n}', score)); }
     }
   };
 }
@@ -358,13 +375,21 @@ function mountMemory(container, { onScore, onHint }, config = {}) {
 }
 
 // ---------- 6. Flap (アクション) ----------
+// task108 (MSI, 2026-08-23, user request): was an unmistakable Flappy Bird reskin (plain green
+// rectangle pipes, flat yellow circle bird) -- physics/scoring/difficulty-curve are untouched
+// (same generic tap-to-flap mechanic every "flappy" clone shares, not the identifying part) but
+// the obstacle shape changed from flat rectangles to jagged crystal spires (polygon path, see
+// drawCrystalSpire below) and the bird to a glowing element orb (reuses the same radial-gradient
+// "energy orb" look as mountMerge's drawOrb, for a consistent visual identity across the app
+// rather than Flappy Bird's plain circle) that cycles through Anyway's own element colors.
 function mountFlap(container, { onScore, onHint }, config = {}) {
   const gravity = config.gravity ?? 900;
-  onHint(gt('hint_flap', 'タップで羽ばたいてパイプを避けよう'));
+  onHint(gt('hint_flap', 'タップで羽ばたいて結晶の尖塔を避けよう'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
   let by, bv, pipes, score, dead, t, particles;
   const reportBest = makeBestTracker('flap', onHint);
+  function birdColor() { return SPIRITSHOP_ELEMENTS[score % SPIRITSHOP_ELEMENTS.length].color; }
   function reset() {
     by = canvas.height / 2; bv = 0; pipes = []; score = 0; dead = false; t = 0; particles = [];
   }
@@ -372,7 +397,7 @@ function mountFlap(container, { onScore, onHint }, config = {}) {
   function flap() {
     if (dead) { reset(); return; }
     bv = -320;
-    spawnBurst(particles, bx, by + 10, '#ffd23f', 3);
+    spawnBurst(particles, bx, by + 10, birdColor(), 3);
   }
   canvas.addEventListener('pointerdown', flap);
 
@@ -407,13 +432,36 @@ function mountFlap(container, { onScore, onHint }, config = {}) {
       if (dead) { sfx.gameover(); flashEl(canvas); spawnBurst(particles, bx, by, '#ff4b4b', 16); reportBest(score); }
     }
     ctx.fillStyle = '#1a2a3a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#2f7d4f';
-    for (const p of pipes) {
-      ctx.fillRect(p.x - 22, 0, 44, p.gy);
-      ctx.fillRect(p.x - 22, p.gy + p.gap, 44, canvas.height - p.gy - p.gap);
+    // Jagged crystal spire instead of a flat pipe rectangle: a zigzag outer edge (tip
+    // protruding toward the gap) drawn as one filled polygon per spire.
+    function drawSpire(x, topY, bottomY, growDown) {
+      const w = 44, teeth = 4, toothH = (bottomY - topY) / teeth;
+      ctx.beginPath();
+      ctx.moveTo(x - w / 2, growDown ? topY : bottomY);
+      for (let i = 0; i <= teeth; i++) {
+        const y = growDown ? topY + i * toothH : bottomY - i * toothH;
+        const inset = (i % 2 === 1) ? w * 0.32 : 0;
+        ctx.lineTo(x - w / 2 + inset, y);
+      }
+      for (let i = teeth; i >= 0; i--) {
+        const y = growDown ? topY + i * toothH : bottomY - i * toothH;
+        const inset = (i % 2 === 1) ? w * 0.32 : 0;
+        ctx.lineTo(x + w / 2 - inset, y);
+      }
+      ctx.closePath();
+      const g = ctx.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+      g.addColorStop(0, '#5b3fa8'); g.addColorStop(0.5, '#8a6fd9'); g.addColorStop(1, '#5b3fa8');
+      ctx.fillStyle = g; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
     }
-    ctx.fillStyle = dead ? '#888' : '#ffd23f';
-    ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+    for (const p of pipes) {
+      drawSpire(p.x, 0, p.gy, true);
+      drawSpire(p.x, p.gy + p.gap, canvas.height, false);
+    }
+    const orbColor = dead ? '#888' : birdColor();
+    const og = ctx.createRadialGradient(bx - br * 0.3, by - br * 0.3, br * 0.1, bx, by, br);
+    og.addColorStop(0, '#ffffff'); og.addColorStop(0.4, orbColor); og.addColorStop(1, orbColor);
+    ctx.beginPath(); ctx.fillStyle = og; ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
     drawBurst(ctx, particles, dt);
     if (dead) {
       ctx.fillStyle = '#fff'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
@@ -424,9 +472,19 @@ function mountFlap(container, { onScore, onHint }, config = {}) {
   return () => { stop(); canvas.removeEventListener('pointerdown', flap); canvas.remove(); };
 }
 
-// ---------- 10. Slide 2048-lite (パズル) ----------
+// ---------- 10. Element Merge Grid (パズル) ----------
+// task108 (MSI, 2026-08-23, user request): was a raw-number 4x4 grid (2/4/8/16...) -- visually
+// unmistakable as 2048 (a genuinely open/generic mechanic with no active enforcement history,
+// but "everyone would call this 2048" per the user, so worth the same treatment as the
+// フルーツマージ->エレメント・フュージョン reskin). Merge logic/scoring is byte-for-byte
+// unchanged (still internally tracks powers of 2) -- only the display swaps raw numbers for
+// Anyway's own 10-element icon/color set (SPIRITSHOP_ELEMENTS, referenced at call time so its
+// later declaration in this file is fine), tier = log2(value)-1 cycling through all 10 so a
+// long game keeps producing a *different*-looking element rather than repeating icon-less
+// numbers past tier 7 the way the old palette silently fell back to one fixed color for
+// everything above 128.
 function mountSlide(container, { onScore, onHint }) {
-  onHint(gt('hint_slide', '下のボタンで同じ数字を合体させよう(上下スワイプは次のゲームへ移動します)'));
+  onHint(gt('hint_slide', '下のボタンで同じ属性を合体させよう(上下スワイプは次のゲームへ移動します)'));
   const wrap = document.createElement('div');
   wrap.className = 'grid-dom';
   wrap.style.gridTemplateColumns = 'repeat(4, 1fr)';
@@ -436,7 +494,11 @@ function mountSlide(container, { onScore, onHint }) {
   container.appendChild(wrap);
 
   let grid, score, lastAdded, mergedCells;
-  const palette = { 2: '#3a3a55', 4: '#3a4a55', 8: '#4a5a45', 16: '#5a5a35', 32: '#6a4a35', 64: '#7a3a35', 128: '#8a3a55' };
+  function tileFor(v) {
+    if (!v) return null;
+    const tier = Math.round(Math.log2(v)) - 1;
+    return SPIRITSHOP_ELEMENTS[((tier % SPIRITSHOP_ELEMENTS.length) + SPIRITSHOP_ELEMENTS.length) % SPIRITSHOP_ELEMENTS.length];
+  }
   const reportBest = makeBestTracker('slide', onHint);
 
   function reset() {
@@ -456,12 +518,13 @@ function mountSlide(container, { onScore, onHint }) {
     wrap.innerHTML = '';
     for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) {
       const v = grid[y][x];
+      const tile = tileFor(v);
       const el = document.createElement('div');
       el.className = 'dom-cell';
       el.style.aspectRatio = '1';
-      el.style.background = v ? (palette[v] || '#9a3a55') : '#2a2a2a';
-      el.style.fontSize = '16px'; el.style.fontWeight = '700';
-      el.textContent = v || '';
+      el.style.background = tile ? tile.color : '#2a2a2a';
+      el.style.fontSize = '22px'; el.style.fontWeight = '700';
+      el.textContent = tile ? tile.icon : '';
       if (lastAdded && lastAdded.x === x && lastAdded.y === y) {
         el.style.transform = 'scale(0.3)'; el.style.opacity = '0';
         requestAnimationFrame(() => {
@@ -583,7 +646,7 @@ function mountStack(container, { onScore, onHint }, config = {}) {
       perfectStreak++;
       sfx.score(perfectStreak);
       spawnBurst(particles, left + overlap / 2, hitY, moving.color, perfectStreak >= 3 ? 18 : 10);
-      if (perfectStreak >= 3 && perfectStreak % 3 === 0) onHint(`🔥 ${perfectStreak}回連続ぴったり！`);
+      if (perfectStreak >= 3 && perfectStreak % 3 === 0) onHint(gt('hint_stack_perfect_streak', '🔥 {n}回連続ぴったり！').replace('{n}', perfectStreak));
     } else {
       perfectStreak = 0;
       beep(420, 0.07, 'sine', 0.1);
@@ -696,22 +759,28 @@ function mountAim(container, { onScore, onHint }, config = {}) {
   return () => { stop(); canvas.removeEventListener('pointerdown', tap); canvas.remove(); };
 }
 
-// ---------- 15. Merge Drop (パズル, スイカゲーム風) ----------
-// Fruits fall under simple gravity into a walled container; touching same-tier fruits merge
-// into the next tier. No physics engine — a handful of Euler-integrated circles with a couple
-// of resolution passes per frame is plenty stable at the low body counts this game produces.
+// ---------- 15. Element Fusion (パズル) ----------
+// task108 (MSI, 2026-08-23, user request): was themed with the exact fruit set + progression
+// order (cherry/strawberry/grape/orange/apple/pear/peach/watermelon) that makes Suika Game
+// instantly recognizable -- "everyone would call this a Suika clone" per the user's own words.
+// Physics/tiers/scoring are untouched (still 8 tiers, same rf progression, same drop-and-merge
+// loop -- that generic mechanic predates Suika Game itself and isn't the identifying signature),
+// only the *visual identity* changed: 8 of Anyway's own 10 elements (SPIRITSHOP_ELEMENTS' own
+// icon/color pairs, reused for consistency with spiritshop rather than inventing a second
+// palette) rendered as glowing orbs (radial-gradient fill, see render loop below) instead of
+// flat-filled fruit circles -- reads as "energy crystal fusion", not "fruit merge".
 const MERGE_FRUITS = [
-  { emoji: '🍒', color: '#ff4d6d', rf: 0.048 },
-  { emoji: '🍓', color: '#ff3355', rf: 0.062 },
-  { emoji: '🍇', color: '#9b5fff', rf: 0.078 },
-  { emoji: '🍊', color: '#ff9f2e', rf: 0.096 },
-  { emoji: '🍎', color: '#ff4433', rf: 0.116 },
-  { emoji: '🍐', color: '#b8e04a', rf: 0.138 },
-  { emoji: '🍑', color: '#ffb3c6', rf: 0.162 },
-  { emoji: '🍉', color: '#31d158', rf: 0.19 },
+  { emoji: '🔥', color: '#e6551a', rf: 0.048 },
+  { emoji: '💧', color: '#0288d1', rf: 0.062 },
+  { emoji: '⚡', color: '#e6a800', rf: 0.078 },
+  { emoji: '🌪️', color: '#4c9a2a', rf: 0.096 },
+  { emoji: '🪨', color: '#6b7a3c', rf: 0.116 },
+  { emoji: '❄️', color: '#3d94c2', rf: 0.138 },
+  { emoji: '✨', color: '#d9a53a', rf: 0.162 },
+  { emoji: '🌑', color: '#4a2a80', rf: 0.19 },
 ];
 function mountMerge(container, { onScore, onHint }, config = {}) {
-  onHint(gt('hint_merge', 'ドラッグで位置を決めて指を離すと落下。同じ果物同士をくっつけて合体させよう！'));
+  onHint(gt('hint_merge', 'ドラッグで位置を決めて指を離すと落下。同じ属性のエレメントをくっつけて融合させよう！'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
   const reportBest = makeBestTracker('merge', onHint);
@@ -776,6 +845,29 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
   canvas.addEventListener('pointerup', pointerup);
   canvas.addEventListener('pointercancel', pointerup);
 
+  // During a dense cascade, several merges can land within a few pixels of each other -- their
+  // popText labels spawn near their own (x,y) and drift by the same -t*40, so if two spawn
+  // anywhere within their shared ~0.8s lifetime they stay visually stacked the whole time
+  // (measured: thousands of overlapping render pairs in a headless stress test). `popText` only
+  // ever holds still-alive entries (dead ones are spliced during render), so checking against
+  // all of them -- not just very-fresh ones -- is what actually prevents that stacking.
+  function spawnPopText(x, y, text) {
+    let px = x;
+    // Push clear of any conflicting label and re-scan from the top, since moving past one can
+    // land on top of another -- a single top-to-bottom pass can't guarantee that (verified via
+    // headless test: a flat one-shot offset still left some labels 4px apart). The guard caps
+    // worst-case iterations; if it's ever hit the label still renders, just not perfectly spread.
+    for (let guard = 0; guard < 20; guard++) {
+      // Compare against each existing label's CURRENT (already-drifted) y, not its spawn y --
+      // an older label has drifted up by p.t*40 already, so a raw-spawn-y comparison understates
+      // how close it actually renders to a brand-new label spawning nearby a moment later.
+      const conflict = popText.find(p => Math.abs((p.y - p.t * 40) - y) < 16 && Math.abs(p.x - px) < 22);
+      if (!conflict) break;
+      px = conflict.x + 22;
+    }
+    popText.push({ x: px, y, t: 0, text });
+  }
+
   // Takes body OBJECT REFERENCES (not array indices) so it stays correct no matter what else
   // has already been spliced out of `bodies` this pass -- see the pass loop below for why.
   function mergeAt(a, b) {
@@ -786,11 +878,11 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
       score += 40; onScore(score); reportBest(score);
       sfx.win();
       spawnBurst(particles, mx, my, '#ffd23f', 24);
-      popText.push({ x: mx, y: my, t: 0, text: '🎉 MEGA!' });
+      spawnPopText(mx, my, '🎉 MEGA!');
     } else {
       score += (newTier + 1) * 4; onScore(score); reportBest(score);
       spawnBurst(particles, mx, my, MERGE_FRUITS[newTier].color, 10 + newTier * 2);
-      popText.push({ x: mx, y: my, t: 0, text: `+${(newTier + 1) * 4}` });
+      spawnPopText(mx, my, `+${(newTier + 1) * 4}`);
       bodies.push({ x: mx, y: my, vx: 0, vy: -60, r: radiusFor(newTier), tier: newTier });
     }
     bodies.splice(bodies.indexOf(a), 1);
@@ -869,19 +961,35 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
     ctx.lineWidth = 3;
     ctx.strokeRect(wallX, overLineY, canvas.width - wallX * 2, floorY - overLineY);
 
+    // task108 (MSI, 2026-08-23): radial-gradient glow instead of a flat-filled circle -- reads
+    // as a crystal/energy orb, not a cartoon fruit (see MERGE_FRUITS comment above for why).
+    // Local darken helper (not reused from map-editor.js's shadeColor -- separate file/scope).
+    function darken(hex, amt) {
+      const n = parseInt(hex.slice(1), 16);
+      const r = Math.max(0, ((n >> 16) & 255) * (1 + amt));
+      const g2 = Math.max(0, ((n >> 8) & 255) * (1 + amt));
+      const b = Math.max(0, (n & 255) * (1 + amt));
+      return `rgb(${r | 0},${g2 | 0},${b | 0})`;
+    }
+    function drawOrb(x, y, r, color) {
+      const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+      g.addColorStop(0, '#ffffff'); g.addColorStop(0.35, color); g.addColorStop(1, darken(color, -0.3));
+      ctx.beginPath(); ctx.fillStyle = g; ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = Math.max(1, r * 0.06); ctx.stroke();
+    }
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     for (const bd of bodies) {
       const f = MERGE_FRUITS[bd.tier];
-      ctx.beginPath(); ctx.fillStyle = f.color; ctx.arc(bd.x, bd.y, bd.r, 0, Math.PI * 2); ctx.fill();
-      ctx.font = `${Math.round(bd.r * 1.3)}px sans-serif`;
+      drawOrb(bd.x, bd.y, bd.r, f.color);
+      ctx.font = `${Math.round(bd.r * 1.1)}px sans-serif`;
       ctx.fillText(f.emoji, bd.x, bd.y + bd.r * 0.05);
     }
 
     if (!dead) {
       const r = radiusFor(activeTier);
       ctx.globalAlpha = 0.9;
-      ctx.beginPath(); ctx.fillStyle = MERGE_FRUITS[activeTier].color; ctx.arc(activeX, dropY + r, r, 0, Math.PI * 2); ctx.fill();
-      ctx.font = `${Math.round(r * 1.3)}px sans-serif`;
+      drawOrb(activeX, dropY + r, r, MERGE_FRUITS[activeTier].color);
+      ctx.font = `${Math.round(r * 1.1)}px sans-serif`;
       ctx.fillText(MERGE_FRUITS[activeTier].emoji, activeX, dropY + r + r * 0.05);
       ctx.globalAlpha = 1;
       ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.setLineDash([4, 6]);
@@ -913,7 +1021,7 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
       ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.7)';
       ctx.fillText('NEXT', canvas.width - wallX - 22, 66);
       const nr = Math.min(16, radiusFor(nextTier) * 0.55);
-      ctx.beginPath(); ctx.fillStyle = MERGE_FRUITS[nextTier].color; ctx.arc(canvas.width - wallX - 22, 90, nr, 0, Math.PI * 2); ctx.fill();
+      drawOrb(canvas.width - wallX - 22, 90, nr, MERGE_FRUITS[nextTier].color);
       ctx.font = `${Math.round(nr * 1.3)}px sans-serif`; ctx.fillStyle = '#fff';
       ctx.fillText(MERGE_FRUITS[nextTier].emoji, canvas.width - wallX - 22, 90 + nr * 0.05);
     }
@@ -1861,7 +1969,13 @@ function mountSpiritShop(container, { onScore, onHint }, config = {}) {
     const cols = 5, rows = 2;
     const size = Math.min(w / cols, h * 0.12) * 0.86;
     const gapX = w / cols, gapY = size * 1.3;
-    const startY = h - rows * gapY - 16;
+    // task108 (MSI, 2026-08-23): was `h - rows * gapY - 16` -- a flat 16px margin with zero
+    // awareness of #bottom-nav or the home-indicator safe area at all, so the stall row rendered
+    // partly underneath the opaque nav bar on real devices (found via a real iPhone screenshot;
+    // see the --safe-bottom comment in style.css :root for why headless verification couldn't
+    // catch this). 140px matches BOTTOM_SAFE's base clearance in mountFort above, which was
+    // tuned against the same #bottom-nav/.overlay-bottom stack this game also sits behind.
+    const startY = h - rows * gapY - (140 + getSafeBottom());
     stalls = SPIRITSHOP_ELEMENTS.map((el, i) => {
       const col = i % cols, row = Math.floor(i / cols);
       return { el, x: gapX * col + gapX / 2, y: startY + row * gapY + size / 2, r: size / 2 };
@@ -1902,7 +2016,7 @@ function mountSpiritShop(container, { onScore, onHint }, config = {}) {
   }
 
   function pointerdown(e) {
-    if (dead) return;
+    if (dead) { reset(); return; }
     const rect = canvas.getBoundingClientRect();
     const x = (e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left;
     const y = (e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top;
@@ -2538,23 +2652,26 @@ function mountFlow(container, { onScore, onHint }) {
 // feed-card format (see output_contrib/MSI/element_fort_clash_royale_analysis.md for the full
 // analysis + scoping rationale). Real PvP (reusing royale.js/trapdojo.js's Supabase realtime
 // pattern) is an explicit future candidate, not attempted here.
-// task108 (MSI, 2026-08-22, user-directed quality pass): `sprite` is an optional path to a
-// generated character-art PNG (assets/element_sprites/<id>.png, transparent background,
-// generated via Gemini + cropped/matted locally -- see element_fort_clash_royale_analysis.md
-// §"品質向上ループ"). Elements without one yet still render fine via color+icon (fortSpriteFor
-// below falls back automatically), so art can be filled in incrementally without ever breaking
-// the game. Fill in the rest here as they're generated.
+// task108 (MSI, 2026-08-22/23, user-directed quality pass): `sprite` is a path to a character-
+// art PNG (assets/element_sprites/<id>.png, transparent background). All 10 are now cropped
+// directly from the official per-character design sheets in キャラクター素材/ (the "正面" 3D
+// render on each) via scripts/_msi_crop_official_sprite.ps1 -- using the canonical art instead of
+// freshly-generated reinterpretations keeps every element visually on-brand and consistent with
+// each other (an earlier pass generated blaze/aqua/volt via Gemini from a text description alone,
+// which drifted off-model -- e.g. volt came out purple instead of the character's actual yellow/
+// black -- so those three were replaced with official-sheet crops too). fortSpriteFor below still
+// falls back to color+icon if a sprite is ever missing/fails to load, so this can never hard-break.
 const FORT_ELEMENTS = [
   { id: 'blaze', color: '#e6551a', icon: '🔥', cost: 3, hp: 80, atk: 40, speed: 0.16, sprite: 'assets/element_sprites/blaze.png' },
   { id: 'aqua', color: '#0288d1', icon: '💧', cost: 3, hp: 110, atk: 25, speed: 0.14, sprite: 'assets/element_sprites/aqua.png' },
   { id: 'volt', color: '#e6a800', icon: '⚡', cost: 2, hp: 50, atk: 35, speed: 0.26, sprite: 'assets/element_sprites/volt.png' },
-  { id: 'gust', color: '#4c9a2a', icon: '🌪️', cost: 2, hp: 60, atk: 22, speed: 0.24 },
-  { id: 'terra', color: '#6b7a3c', icon: '🪨', cost: 5, hp: 220, atk: 20, speed: 0.09 },
-  { id: 'frost', color: '#3d94c2', icon: '❄️', cost: 4, hp: 130, atk: 45, speed: 0.10 },
-  { id: 'light', color: '#d9a53a', icon: '✨', cost: 3, hp: 100, atk: 30, speed: 0.15 },
-  { id: 'nox', color: '#4a2a80', icon: '🌑', cost: 3, hp: 70, atk: 50, speed: 0.20 },
-  { id: 'leaf', color: '#4f8a2c', icon: '🌿', cost: 4, hp: 150, atk: 28, speed: 0.12 },
-  { id: 'plasma', color: '#6a3fc0', icon: '🔮', cost: 6, hp: 200, atk: 55, speed: 0.13 },
+  { id: 'gust', color: '#4c9a2a', icon: '🌪️', cost: 2, hp: 60, atk: 22, speed: 0.24, sprite: 'assets/element_sprites/gust.png' },
+  { id: 'terra', color: '#6b7a3c', icon: '🪨', cost: 5, hp: 220, atk: 20, speed: 0.09, sprite: 'assets/element_sprites/terra.png' },
+  { id: 'frost', color: '#3d94c2', icon: '❄️', cost: 4, hp: 130, atk: 45, speed: 0.10, sprite: 'assets/element_sprites/frost.png' },
+  { id: 'light', color: '#d9a53a', icon: '✨', cost: 3, hp: 100, atk: 30, speed: 0.15, sprite: 'assets/element_sprites/light.png' },
+  { id: 'nox', color: '#4a2a80', icon: '🌑', cost: 3, hp: 70, atk: 50, speed: 0.20, sprite: 'assets/element_sprites/nox.png' },
+  { id: 'leaf', color: '#4f8a2c', icon: '🌿', cost: 4, hp: 150, atk: 28, speed: 0.12, sprite: 'assets/element_sprites/leaf.png' },
+  { id: 'plasma', color: '#6a3fc0', icon: '🔮', cost: 6, hp: 200, atk: 55, speed: 0.13, sprite: 'assets/element_sprites/plasma.png' },
 ];
 // Shared, lazily-populated image cache keyed by element id -- loaded once per page session
 // (not per mount) so re-entering the Fort card repeatedly never re-fetches the same PNGs.
@@ -2578,15 +2695,51 @@ const FORT_ENGAGE_RANGE = 0.045; // lane-fraction distance at which two troops s
 const FORT_TOWER_ATK = 26;
 const FORT_TOWER_HP = 260;
 const FORT_MATCH_SECONDS = 48;
+// task108 (MSI, 2026-08-24, CEO-provided art): 4 hand-drawn top-down battlefield maps (own
+// commission, see 3D素材/Gemini_Generated_Image_ya7axaya7axaya7a.jpg for the original 4-up
+// sheet this was cropped from -- assets/element_fort_maps/<id>.jpg). Each shows the same
+// structure this game already used blindly (a start flag at the bottom, a goal flag at the top,
+// a crossing at the midline) but drawn with an actual path: a wide open lane on the left, one
+// down the middle, and one on the right, meeting at the midline crossing. FORT_LANE_X assigns
+// troops to whichever of those three paths their drop point was closest to, instead of every
+// troop marching straight up the dead-center pixel column regardless of map -- so "where can a
+// character walk" now has a real answer per map, matching Clash Royale's own two/three-lane
+// pushing rather than the single fixed rail this had before.
+const FORT_MAPS = [
+  { id: 'grassland', name: '草原の村', image: 'assets/element_fort_maps/grassland.jpg' },
+  { id: 'forest', name: '深緑の森', image: 'assets/element_fort_maps/forest.jpg' },
+  { id: 'desert', name: '乾いた渓谷', image: 'assets/element_fort_maps/desert.jpg' },
+  { id: 'urban', name: '未来都市', image: 'assets/element_fort_maps/urban.jpg' },
+];
+const FORT_LANE_X = [0.24, 0.5, 0.76]; // left / center / right, as a fraction of canvas width
+function fortLaneFromX(px, canvasWidth) {
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < FORT_LANE_X.length; i++) {
+    const d = Math.abs(px - FORT_LANE_X[i] * canvasWidth);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+const _fortMapCache = {};
+function fortMapImageFor(map) {
+  let entry = _fortMapCache[map.id];
+  if (!entry) {
+    const img = new Image();
+    entry = _fortMapCache[map.id] = { img, ready: false };
+    img.onload = () => { entry.ready = true; };
+    img.src = map.image;
+  }
+  return entry.ready ? entry.img : null;
+}
 
 function fortRandomCard() { return Math.floor(Math.random() * FORT_ELEMENTS.length); }
 // `id` is a per-match monotonic counter (state.nextTroopId) rather than array index, so
 // mountFort's render loop can tell "this troop died this tick" apart from "this troop just
 // hasn't been pushed yet" purely by identity, across the array splice in fortTick below.
-function fortMakeTroop(state, elementIdx, side) {
+function fortMakeTroop(state, elementIdx, side, lane) {
   const el = FORT_ELEMENTS[elementIdx];
   const id = (state.nextTroopId = (state.nextTroopId || 0) + 1);
-  return { id, el, side, hp: el.hp, maxHp: el.hp, pos: side === 'player' ? 0 : 1, attacking: null };
+  return { id, el, side, lane: lane ?? 1, hp: el.hp, maxHp: el.hp, pos: side === 'player' ? 0 : 1, attacking: null, spawnT: 0 };
 }
 // Advances the whole battle by dt seconds: elixir regen, troop movement, combat, tower damage.
 // Pure over `state` (mutates it in place and returns it) so it's callable identically from the
@@ -2595,7 +2748,9 @@ function fortTick(state, dt) {
   state.playerElixir = Math.min(FORT_MAX_ELIXIR, state.playerElixir + dt / FORT_ELIXIR_REGEN_SEC);
   state.aiElixir = Math.min(FORT_MAX_ELIXIR, state.aiElixir + dt / FORT_ELIXIR_REGEN_SEC);
 
-  // Pair up engaged troops (closest opposing pair within FORT_ENGAGE_RANGE), mutual damage.
+  // Pair up engaged troops (closest opposing pair *in the same lane* within FORT_ENGAGE_RANGE),
+  // mutual damage -- lanes only block combat pairing, not movement; a lane with no defender lets
+  // its attacker walk straight to that lane's share of the tower unopposed.
   const players = state.troops.filter(t => t.side === 'player' && t.hp > 0);
   const ais = state.troops.filter(t => t.side === 'ai' && t.hp > 0);
   for (const p of players) p.attacking = null;
@@ -2603,7 +2758,7 @@ function fortTick(state, dt) {
   for (const p of players) {
     let best = null, bestD = FORT_ENGAGE_RANGE;
     for (const a of ais) {
-      if (a.attacking) continue;
+      if (a.attacking || a.lane !== p.lane) continue;
       const d = Math.abs(p.pos - a.pos);
       if (d <= bestD) { best = a; bestD = d; }
     }
@@ -2628,7 +2783,7 @@ function fortTick(state, dt) {
   // task108 (MSI, 2026-08-22, quality pass): record who died *this* tick (position + side +
   // color) before they're spliced out, so the render loop can spawn a death burst/sfx without
   // fortTick itself touching canvas/particles -- keeps this function pure/headless-testable.
-  state.deadThisTick = state.troops.filter(t => t.hp <= 0).map(t => ({ pos: t.pos, side: t.side, color: t.el.color }));
+  state.deadThisTick = state.troops.filter(t => t.hp <= 0).map(t => ({ pos: t.pos, side: t.side, lane: t.lane, color: t.el.color }));
   state.troops = state.troops.filter(t => t.hp > 0);
   state.elapsed += dt;
   return state;
@@ -2654,7 +2809,8 @@ function fortAiMaybeDeploy(state, dt) {
   if (!affordable.length) return null;
   const idx = affordable[Math.floor(Math.random() * affordable.length)];
   state.aiElixir -= FORT_ELEMENTS[idx].cost;
-  state.troops.push(fortMakeTroop(state, idx, 'ai'));
+  const lane = Math.floor(Math.random() * FORT_LANE_X.length);
+  state.troops.push(fortMakeTroop(state, idx, 'ai', lane));
   return idx;
 }
 // task108 (MSI, 2026-08-22, quality pass §7-3 item 3): every card used to play the same
@@ -2671,10 +2827,13 @@ function fortSfxFor(el) {
 }
 
 function mountFort(container, { onScore, onHint }) {
-  onHint(gt('hint_fort', 'カードをタップしてエレメントを出撃させよう！エリクサーがたまったら出せる、敵タワーを壊せ'));
+  onHint(gt('hint_fort', 'カードをドラッグして自陣側の好きな位置にドロップ！エリクサーがたまったら出せる、敵タワーを壊せ'));
   const canvas = makeCanvas(container);
   const ctx = canvas.getContext('2d');
   const reportBest = makeBestTracker('fort', onHint);
+  // One map per feed-card visit (not re-rolled every reset()) -- picking a new map every 1.4s
+  // reset would be visually jarring mid-session; this only changes when the card is re-mounted.
+  const fortMap = FORT_MAPS[Math.floor(Math.random() * FORT_MAPS.length)];
   let state, hand, score, particles, ended, cardRects;
 
   function newHand() { return [fortRandomCard(), fortRandomCard(), fortRandomCard(), fortRandomCard()]; }
@@ -2692,7 +2851,9 @@ function mountFort(container, { onScore, onHint }) {
   // above bottom:16px (the old value), or its lower portion renders underneath the opaque
   // #bottom-nav bar (cost numbers clipped) and the elixir bar lands directly on top of the
   // title/creator text (verified via a headless screenshot: both were visibly happening).
-  const BOTTOM_SAFE = 140;
+  // Computed once (not module-level) since it depends on getSafeBottom(), which can only be
+  // read once the DOM/CSS is actually attached; stable for the life of one mount.
+  const BOTTOM_SAFE = 140 + getSafeBottom();
   function layoutCards() {
     const n = hand.length;
     const w = Math.min(74, (canvas.width - 16 * (n + 1)) / n);
@@ -2703,36 +2864,93 @@ function mountFort(container, { onScore, onHint }) {
   }
   layoutCards();
 
-  function playCard(i) {
+  function laneY(pos) {
+    const top = 90, bottom = canvas.height - HAND_H - BOTTOM_SAFE - 20;
+    return bottom - pos * (bottom - top);
+  }
+  // task108 (MSI, 2026-08-23, user-directed rework): the original interaction was tap-a-card-to-
+  // instant-deploy-at-your-tower -- no placement choice at all, which reads as an idle auto-
+  // battler (user's comparison: "にゃんこ大戦争") rather than Clash Royale's core "grab a card,
+  // drop it where you want" mechanic. This replaces that with real drag-and-drop: press a card,
+  // drag it up into the field, and release to deploy at that spot -- anywhere in your own half
+  // of the lane (pos 0..0.5; the river at pos 0.5 is the hard limit, matching the source
+  // material's "you can only place on your side" rule). A release with near-zero drag distance
+  // is still treated as a quick "deploy near my tower" tap, so single-tap play keeps working.
+  function playCard(i, dropPos, dropLane) {
     if (ended) return;
     const idx = hand[i];
     const el = FORT_ELEMENTS[idx];
     if (el.cost > state.playerElixir) { sfx.bad(); return; }
     state.playerElixir -= el.cost;
-    state.troops.push(fortMakeTroop(state, idx, 'player'));
+    const troop = fortMakeTroop(state, idx, 'player', dropLane);
+    troop.pos = dropPos;
+    state.troops.push(troop);
     hand[i] = fortRandomCard();
     const p = fortSfxFor(el);
     beep(p.freq, p.dur, p.type, p.gain);
-    const laneX = canvas.width / 2, laneY = canvas.height - HAND_H - BOTTOM_SAFE - 24;
-    spawnBurst(particles, laneX, laneY, el.color, 6);
+    spawnBurst(particles, FORT_LANE_X[dropLane] * canvas.width, laneY(dropPos), el.color, 6);
   }
-  function pointerdown(e) {
-    const rect = canvas.getBoundingClientRect();
-    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const RIVER_POS = 0.5;
+  let dragging = null; // { cardIndex, startX, startY, curX, curY }
+  function cardAt(px, py) {
     for (let i = 0; i < cardRects.length; i++) {
       const r = cardRects[i];
-      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) { playCard(i); return; }
+      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
     }
+    return -1;
   }
+  function pointerdown(e) {
+    if (ended) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const i = cardAt(px, py);
+    if (i >= 0) dragging = { cardIndex: i, startX: px, startY: py, curX: px, curY: py };
+  }
+  function pointermove(e) {
+    if (!dragging) return;
+    const rect = canvas.getBoundingClientRect();
+    dragging.curX = e.clientX - rect.left;
+    dragging.curY = e.clientY - rect.top;
+  }
+  function pointerup(e) {
+    if (!dragging) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const dist = Math.hypot(px - dragging.startX, py - dragging.startY);
+    const top = 90, bottom = canvas.height - HAND_H - BOTTOM_SAFE - 20, river = laneY(RIVER_POS);
+    const cardIndex = dragging.cardIndex;
+    dragging = null;
+    // quick tap -> deploy near own tower, in whichever lane was tapped
+    if (dist < 10) { playCard(cardIndex, 0.12, fortLaneFromX(px, canvas.width)); return; }
+    if (py < river || py > bottom) return; // dropped past the river or back over the hand -- cancel
+    const pos = Math.max(0, Math.min(RIVER_POS, (bottom - py) / (bottom - top)));
+    playCard(cardIndex, pos, fortLaneFromX(px, canvas.width));
+  }
+  function pointercancel() { dragging = null; }
   canvas.addEventListener('pointerdown', pointerdown);
-
-  function laneY(pos) {
-    const top = 90, bottom = canvas.height - HAND_H - BOTTOM_SAFE - 20;
-    return bottom - pos * (bottom - top);
-  }
+  canvas.addEventListener('pointermove', pointermove);
+  canvas.addEventListener('pointerup', pointerup);
+  canvas.addEventListener('pointercancel', pointercancel);
   function drawTowerBar(x, y, w, hp, maxHp, color) {
     ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(x, y, w, 8);
     ctx.fillStyle = color; ctx.fillRect(x, y, w * Math.max(0, hp / maxHp), 8);
+  }
+  // task108 (MSI, 2026-08-27, precision audit): this used to be a single flat #3a3a55
+  // fillRect for BOTH towers -- a plain gray box with no icon and no visual distinction
+  // between player/enemy, jarring against the photoreal map art and the sprited troops
+  // around it (found via headless screenshot review). Team-tinted rounded rect + a castle
+  // icon reads as an actual tower instead of a placeholder, matching the polish level of
+  // the rest of the scene.
+  function drawTowerIcon(x, y, w, h, tint) {
+    ctx.save();
+    ctx.fillStyle = tint;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, 6);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.font = `${h - 4}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('🏯', x + w / 2, y + h / 2 + 1);
+    ctx.restore();
   }
   const stop = loopRAF((dt) => {
     if (!ended) {
@@ -2754,7 +2972,7 @@ function mountFort(container, { onScore, onHint }) {
       // marked the kill. deadThisTick (populated by fortTick above) drives a pop burst + a
       // soft beep per kill instead, on both sides so losses read as clearly as kills do.
       for (const d of state.deadThisTick) {
-        spawnBurst(particles, canvas.width / 2 + (d.side === 'player' ? -18 : 18), laneY(d.pos), d.color, 8);
+        spawnBurst(particles, FORT_LANE_X[d.lane] * canvas.width + (d.side === 'player' ? -10 : 10), laneY(d.pos), d.color, 8);
       }
       if (state.deadThisTick.length) beep(170, 0.09, 'triangle', 0.08);
       const w = fortWinner(state);
@@ -2775,23 +2993,85 @@ function mountFort(container, { onScore, onHint }) {
       }
     }
     ctx.fillStyle = '#101026'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // task108 (MSI, 2026-08-24, CEO-provided art): cover-fit the chosen battlefield image behind
+    // everything else. Dimmed so troop sprites/HP bars/particles stay readable on top of busy
+    // art (same "dim the scenery, keep the gameplay legible" approach as royale.js/cup.js's map
+    // backgrounds -- see map_background_mismatch_fix.md for why that pattern exists at all).
+    const mapImg = fortMapImageFor(fortMap);
+    if (mapImg) {
+      const ir = mapImg.width / mapImg.height, cr = canvas.width / canvas.height;
+      let dw, dh;
+      if (ir > cr) { dh = canvas.height; dw = dh * ir; } else { dw = canvas.width; dh = dw / ir; }
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      ctx.drawImage(mapImg, (canvas.width - dw) / 2, (canvas.height - dh) / 2, dw, dh);
+      ctx.restore();
+    }
+
+    // task108 (MSI, 2026-08-23): while dragging a card, dim the enemy half and highlight the
+    // player's own half (down to the river) as the valid drop zone -- makes the "you can only
+    // place on your side" rule (see playCard's comment) visible instead of just enforced.
+    if (dragging) {
+      const top = 90, bottom = canvas.height - HAND_H - BOTTOM_SAFE - 20, river = laneY(RIVER_POS);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, top, canvas.width, river - top);
+      ctx.fillStyle = 'rgba(78,209,122,0.10)'; ctx.fillRect(0, river, canvas.width, bottom - river);
+      // task108 (MSI, 2026-08-24): lane guide lines so "which of the 3 paths am I dropping
+      // into" is visible while dragging, not just inferred after the fact.
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1; ctx.setLineDash([3, 5]);
+      for (const lx of FORT_LANE_X) {
+        ctx.beginPath(); ctx.moveTo(lx * canvas.width, top); ctx.lineTo(lx * canvas.width, bottom); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
     ctx.strokeStyle = 'rgba(120,170,255,0.35)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(0, canvas.height / 2); ctx.lineTo(canvas.width, canvas.height / 2); ctx.stroke();
+    const riverY = laneY(RIVER_POS);
+    ctx.beginPath(); ctx.moveTo(0, riverY); ctx.lineTo(canvas.width, riverY); ctx.stroke();
 
     drawTowerBar(canvas.width / 2 - 40, laneY(1) - 26, 80, state.aiTowerHp, FORT_TOWER_HP, '#ff5a3c');
-    ctx.fillStyle = '#3a3a55'; ctx.fillRect(canvas.width / 2 - 22, laneY(1) - 20, 44, 20);
+    drawTowerIcon(canvas.width / 2 - 22, laneY(1) - 20, 44, 20, 'rgba(214,64,36,0.65)');
     drawTowerBar(canvas.width / 2 - 40, laneY(0) + 12, 80, state.playerTowerHp, FORT_TOWER_HP, '#4ea8ff');
-    ctx.fillStyle = '#3a3a55'; ctx.fillRect(canvas.width / 2 - 22, laneY(0), 44, 20);
+    drawTowerIcon(canvas.width / 2 - 22, laneY(0), 44, 20, 'rgba(30,110,220,0.65)');
 
+    // task108 (MSI, 2026-08-23): single master pose per element (no walk/attack frame sheets
+    // exist), so movement/combat is animated procedurally instead of via frame-swapping --
+    // idle/advancing troops get a speed-scaled bob + squash-stretch ("walk cycle" read through
+    // one image, same trick 2D hyper-casual games use for single-sprite characters), and engaged
+    // troops get a punchy scale-up + lean-toward-target pulse on a fixed cadence layered on top
+    // of (not replacing) the continuous-damage combat model in fortTick.
     for (const t of state.troops) {
-      const x = canvas.width / 2 + (t.side === 'player' ? -18 : 18), y = laneY(t.pos);
+      t.animPhase = (t.animPhase || 0) + dt;
+      t.spawnT = Math.min(0.22, (t.spawnT || 0) + dt);
+      // task108 (MSI, 2026-08-24): troops now walk their assigned lane's path (left/center/
+      // right, per FORT_LANE_X) instead of a single fixed rail down the exact center pixel --
+      // see FORT_LANE_X's own comment for why. The two troops sharing a lane still separate by
+      // a few px (side offset) purely so they don't fully overlap when both stack up on it.
+      const x = FORT_LANE_X[t.lane] * canvas.width + (t.side === 'player' ? -10 : 10);
+      const baseY = laneY(t.pos);
+      let bobY = 0, scaleX = 1, scaleY = 1;
+      if (t.attacking) {
+        const cycle = (t.animPhase % 0.35) / 0.35;
+        const punch = cycle < 0.25 ? Math.sin((cycle / 0.25) * Math.PI) : 0;
+        scaleX = 1 + punch * 0.14; scaleY = 1 - punch * 0.10;
+        bobY = (t.side === 'player' ? -1 : 1) * punch * 4; // lean toward the opponent
+      } else {
+        const freq = 5 + t.el.speed * 14;
+        const wave = Math.sin(t.animPhase * freq);
+        bobY = wave * 2.5;
+        scaleX = 1 + wave * 0.05; scaleY = 1 - wave * 0.05;
+      }
+      // task108 (MSI, 2026-08-24): newly-dropped troops used to just pop into existence at full
+      // size on frame one. A quick scale-in (ease-out over ~0.22s) reads as "landing" instead --
+      // cheap, but it's the difference between a sprite appearing and a sprite arriving.
+      const spawnScale = t.spawnT >= 0.22 ? 1 : 1 - Math.pow(1 - t.spawnT / 0.22, 2) * 0.6;
+      scaleX *= spawnScale; scaleY *= spawnScale;
+      const y = baseY + bobY;
       const sprite = fortSpriteFor(t.el);
       if (sprite) {
-        const dh = 34, dw = dh * (sprite.width / sprite.height);
+        const dh = 34 * scaleY, dw = (34 * (sprite.width / sprite.height)) * scaleX;
         ctx.drawImage(sprite, x - dw / 2, y - dh / 2, dw, dh);
       } else {
         ctx.fillStyle = t.el.color;
-        ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(x, y, 14 * scaleX, 14 * scaleY, 0, 0, Math.PI * 2); ctx.fill();
         ctx.font = '14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText(t.el.icon, x, y);
       }
@@ -2800,6 +3080,24 @@ function mountFort(container, { onScore, onHint }) {
     }
     drawBurst(ctx, particles, dt);
 
+    // Dragged card follows the pointer as an enlarged ghost, so "grab and drop" reads clearly.
+    if (dragging) {
+      const el = FORT_ELEMENTS[hand[dragging.cardIndex]];
+      const ghostSprite = fortSpriteFor(el);
+      const gx = dragging.curX, gy = dragging.curY;
+      ctx.globalAlpha = 0.85;
+      if (ghostSprite) {
+        const dh = 46, dw = dh * (ghostSprite.width / ghostSprite.height);
+        ctx.drawImage(ghostSprite, gx - dw / 2, gy - dh / 2, dw, dh);
+      } else {
+        ctx.fillStyle = el.color;
+        ctx.beginPath(); ctx.arc(gx, gy, 18, 0, Math.PI * 2); ctx.fill();
+        ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(el.icon, gx, gy);
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // Elixir bar
     const eBarX = 16, eBarY = canvas.height - HAND_H - BOTTOM_SAFE - 18, eBarW = canvas.width - 32;
     ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(eBarX, eBarY, eBarW, 10);
@@ -2807,9 +3105,16 @@ function mountFort(container, { onScore, onHint }) {
     ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'left';
     ctx.fillText(Math.floor(state.playerElixir) + '/' + FORT_MAX_ELIXIR, eBarX, eBarY - 4);
 
-    // Hand cards
+    // Hand cards (the one currently being dragged renders as an empty slot -- its ghost is
+    // drawn near the pointer instead, above)
     for (let i = 0; i < cardRects.length; i++) {
       const r = cardRects[i], el = FORT_ELEMENTS[hand[i]];
+      if (dragging && dragging.cardIndex === i) {
+        ctx.fillStyle = '#141425'; ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 2; ctx.setLineDash([4, 4]);
+        ctx.strokeRect(r.x, r.y, r.w, r.h); ctx.setLineDash([]);
+        continue;
+      }
       const affordable = el.cost <= state.playerElixir;
       ctx.fillStyle = affordable ? '#2a2a45' : '#1a1a2a';
       ctx.fillRect(r.x, r.y, r.w, r.h);
@@ -2836,7 +3141,14 @@ function mountFort(container, { onScore, onHint }) {
     }
   });
 
-  return () => { stop(); canvas.removeEventListener('pointerdown', pointerdown); canvas.remove(); };
+  return () => {
+    stop();
+    canvas.removeEventListener('pointerdown', pointerdown);
+    canvas.removeEventListener('pointermove', pointermove);
+    canvas.removeEventListener('pointerup', pointerup);
+    canvas.removeEventListener('pointercancel', pointercancel);
+    canvas.remove();
+  };
 }
 
 // ---------- 23. Element Trail (パズル, Longcat風スライド塗りつぶし) ----------
@@ -3009,12 +3321,12 @@ const GAME_DEFS = [
       options: ['🐱','🐶','🐼','🦊','🐸','🐵','🦁','🐯','🐰','🐹','🐨','🦄','🐷','🐮','🐔','🦋','🐢','🐙'] }] },
   { id: 'flap', title: 'はばたき飛行', genre: 'アクション', mount: mountFlap,
     params: [{ key: 'gravity', label: '重力の強さ', min: 600, max: 1200, step: 50, default: 900 }] },
-  { id: 'slide', title: 'スライド合体パズル', genre: 'パズル', mount: mountSlide },
+  { id: 'slide', title: 'エレメント・グリッド', genre: 'パズル', mount: mountSlide },
   { id: 'stack', title: '積み上げタワー', genre: 'タイミング', mount: mountStack,
     params: [{ key: 'speedStart', label: 'ブロックの速さ', min: 80, max: 240, step: 10, default: 140 }] },
   { id: 'aim', title: 'ねらえ！ピタッとタイミング', genre: 'タイミング', mount: mountAim,
     params: [{ key: 'startSpeed', label: 'マーカーの速さ', min: 120, max: 360, step: 20, default: 220 }] },
-  { id: 'merge', title: 'フルーツマージ', genre: 'パズル', mount: mountMerge,
+  { id: 'merge', title: 'エレメント・フュージョン', genre: 'パズル', mount: mountMerge,
     params: [{ key: 'autoDropAfter', label: '自動落下までの時間(秒)', min: 1.5, max: 6, step: 0.5, default: 3.2 }] },
   // No params/choiceParams: the whole "config" IS the user-drawn config.layout grid (see
   // maze-editor.js), there's nothing left to slider-tune once a course is posted.

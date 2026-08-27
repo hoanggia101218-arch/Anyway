@@ -230,13 +230,98 @@ function buildTree() {
   return { group, update() {}, dispose() { disposeGroup(group); } };
 }
 
+// task108 (MSI, 2026-08-23, user request): landmark builders for buildGround()'s new LANDMARKS
+// placement pass (see below). Kept in the same simple box/cylinder/cone-primitive style as
+// buildHouse/buildTree/buildRock above -- these are lightweight stand-ins for the real
+// blender/build_mapN.py structures (watchtowers/wells/market stalls), not attempts at matching
+// their full detail, sized to look right against GROUND_HALF_X=4.6/GROUND_HALF_Z=2.875.
+function buildWatchtower() {
+  const group = new THREE.Group();
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.9, 8), new THREE.MeshStandardMaterial({ color: 0x6b5a3f, roughness: 0.85 }));
+  post.position.y = 0.45;
+  group.add(post);
+  const deck = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.05, 8), new THREE.MeshStandardMaterial({ color: 0x8a7452, roughness: 0.85 }));
+  deck.position.y = 0.92;
+  group.add(deck);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.19, 0.22, 8), new THREE.MeshStandardMaterial({ color: 0xa8432f, roughness: 0.8 }));
+  roof.position.y = 1.1;
+  group.add(roof);
+  return { group, update() {}, dispose() { disposeGroup(group); } };
+}
+function buildWell() {
+  const group = new THREE.Group();
+  const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.16, 10), new THREE.MeshStandardMaterial({ color: 0x8a8a8a, roughness: 0.9 }));
+  rim.position.y = 0.08;
+  group.add(rim);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.14, 4), new THREE.MeshStandardMaterial({ color: 0xa8432f, roughness: 0.8 }));
+  roof.position.y = 0.32;
+  roof.rotation.y = Math.PI / 4;
+  group.add(roof);
+  return { group, update() {}, dispose() { disposeGroup(group); } };
+}
+function buildMarketStall() {
+  const group = new THREE.Group();
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.32), new THREE.MeshStandardMaterial({ color: 0xd9a53a, roughness: 0.85 }));
+  roof.position.y = 0.42;
+  group.add(roof);
+  const table = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.26), new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: 0.9 }));
+  table.position.y = 0.2;
+  group.add(table);
+  return { group, update() {}, dispose() { disposeGroup(group); } };
+}
+
+// Real building positions lifted directly from blender/build_map1.py's main(): the two
+// add_watchtower(0, +-16*SCALE) calls and the explicit 6-tuple `huts = [(-7,7),(7,7.5),(-9,-6),
+// (8,-5.5),(-2,9),(3,-9)]` core-village list (SCALE=1.0 in that file, so those ARE the raw
+// Blender coordinates, not something computed from them). Deliberately NOT including
+// add_well/add_market_stall -- checked their actual calls in build_map1.py and they sit at
+// (20,22)/(-45,-20)/(50,55) and (-14,14)/(-11,18)/(-17,20), i.e. the wider outskirts scatter
+// zone, not this tight ~16-unit village-core radius -- forcing them into the same normalization
+// as the core would either place them off the tiny play terrain's edge or shrink the core
+// buildings down to near-invisible, so they're left out rather than approximated.
+// Rescaled from Blender world units to this file's tiny GROUND_HALF_X=4.6/GROUND_HALF_Z=2.875
+// play terrain (see status.json task108 for why the terrain itself, ~20x smaller than the
+// Blender scene, wasn't resized here -- bigger, riskier change: movement speed/camera/
+// multiplayer sync tuning all assume the current scale). SCALE_X/Z below use R=16 (the
+// watchtowers' own distance from center, the natural "village core" radius) with an 0.85 safety
+// margin so nothing lands exactly on the terrain edge; Blender Y maps to world Z.
+const LANDMARKS = (function () {
+  const R = 16, MARGIN = 0.85;
+  const sx = (MARGIN * GROUND_HALF_X) / R, sz = (MARGIN * GROUND_HALF_Z) / R;
+  const watchtowers = [[0, 16], [0, -16]];
+  const huts = [[-7, 7], [7, 7.5], [-9, -6], [8, -5.5], [-2, 9], [3, -9]];
+  // map2 ("忘れられた峡谷"): blender/build_map2.py main()'s single add_watchtower(-16*SCALE,
+  // 8*SCALE, ..., height=11.0) call -- SCALE=1.0 there too. Bridges/cave mounds intentionally
+  // left out: they're carved INTO that file's canyon terrain geometry (add_canyon_floor_detail),
+  // not free-standing props, so placing a standalone "bridge" object here with no matching gap
+  // in this file's own (flat, photo-displaced) terrain would float over nothing and look worse
+  // than not placing it. R2=18 (this watchtower's own distance from center) with the same 0.85
+  // margin as map1.
+  const R2 = 18, sx2 = (MARGIN * GROUND_HALF_X) / R2, sz2 = (MARGIN * GROUND_HALF_Z) / R2;
+
+  return {
+    season1_map1: [
+      ...watchtowers.map(([bx, by]) => ({ build: buildWatchtower, x: bx * sx, z: by * sz })),
+      ...huts.map(([bx, by]) => ({ build: buildHouse, x: bx * sx, z: by * sz })),
+    ],
+    season1_map2: [
+      { build: buildWatchtower, x: -16 * sx2, z: 8 * sz2 },
+    ],
+    // maps 3-6 (sci-fi city grid / hero training plaza / others) each need their own bespoke
+    // landmark shapes (city towers, jump pads, portals, ...) rather than the village-style
+    // watchtower/house builders above -- forcing those in would look thematically wrong, not
+    // better than the existing photo-based generic tree/rock scatter. Deliberately left as a
+    // scoped follow-up rather than done poorly now; see status.json task108 notes.
+  };
+})();
+
 const ITEM_DEFS = [
-  { type: "teleporter", label: "瞬間移動", icon: "🌀", build: buildTeleporter },
-  { type: "heal", label: "回復スポット", icon: "💚", build: buildHealSpot },
-  { type: "energy", label: "エネルギーボール", icon: "🔮", build: buildEnergyBall },
-  { type: "grass", label: "ステルス草原", icon: "🌾", build: buildStealthGrass },
-  { type: "house", label: "家", icon: "🏠", build: buildHouse },
-  { type: "rock", label: "岩", icon: "🪨", build: buildRock },
+  { type: "teleporter", label: "瞬間移動", i18nKey: "me_item_teleporter", icon: "🌀", build: buildTeleporter },
+  { type: "heal", label: "回復スポット", i18nKey: "me_item_heal", icon: "💚", build: buildHealSpot },
+  { type: "energy", label: "エネルギーボール", i18nKey: "me_item_energy", icon: "🔮", build: buildEnergyBall },
+  { type: "grass", label: "ステルス草原", i18nKey: "me_item_grass", icon: "🌾", build: buildStealthGrass },
+  { type: "house", label: "家", i18nKey: "me_item_house", icon: "🏠", build: buildHouse },
+  { type: "rock", label: "岩", i18nKey: "me_item_rock", icon: "🪨", build: buildRock },
 ];
 
 let stylesInjected = false;
@@ -330,9 +415,7 @@ function buildGround(scene, { photoUrl, mapColor }) {
   water.position.y = -0.09;
   scene.add(water);
 
-  // Populated with actual 3D trees/rocks scattered on land once the photo loads (see below) --
-  // not an exact reproduction of each map's real buildings (no per-map position data exists,
-  // only the flat rendered photos), but real standing 3D objects instead of nothing.
+  // Populated with actual 3D trees/rocks scattered on land once the photo loads (see below).
   const decorations = [];
 
   // Filled in once the photo's pixels are read (see below); null until then, so heightAt()
@@ -363,6 +446,21 @@ function buildGround(scene, { photoUrl, mapColor }) {
     heightReadyCallbacks.forEach((cb) => cb());
     heightReadyCallbacks.length = 0;
   }
+
+  // task108 (MSI, 2026-08-23, user request): place this map's real landmark buildings (see the
+  // LANDMARKS comment above) -- matched off photoUrl's own path (assets/maps/<id>/...) rather
+  // than needing mount()'s caller to thread a separate map-id option through. Placed the same
+  // way the player/other synchronously-placed items are (flat y first, re-snapped via
+  // onHeightReady once the real heightmap loads) since this runs before that's ready too.
+  const mapIdMatch = photoUrl && photoUrl.match(/maps\/(season1_map\d+)\//);
+  const landmarks = (mapIdMatch && LANDMARKS[mapIdMatch[1]]) || [];
+  landmarks.forEach((lm) => {
+    const inst = lm.build();
+    inst.group.position.set(lm.x, heightAt(lm.x, lm.z), lm.z);
+    scene.add(inst.group);
+    decorations.push(inst);
+    onHeightReady(() => { inst.group.position.y = heightAt(lm.x, lm.z); });
+  });
 
   if (photoUrl) {
     // THREE.Loader defaults `crossOrigin` to "anonymous", which ImageLoader then sets as the
@@ -762,7 +860,7 @@ function mount(container, opts) {
       btn.className = "me-item-btn";
       btn.dataset.kind = "item";
       btn.dataset.id = it.type;
-      btn.innerHTML = `<span class="me-item-face">${it.icon}</span><span class="me-item-label">${escapeHtml(it.label)}</span>`;
+      btn.innerHTML = `<span class="me-item-face">${it.icon}</span><span class="me-item-label">${escapeHtml(gt(it.i18nKey, it.label))}</span>`;
       wireDrag(btn, "item", it);
       trayBody.appendChild(btn);
     });

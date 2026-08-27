@@ -102,7 +102,6 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 function mountMarble(container, { onScore, onHint }, config = {}) {
-  onHint(gt('hint_marble', '左右にドラッグしてバランスを取ろう！傾斜に流されないよう気をつけて'));
   container.style.position = 'relative';
   const width = container.clientWidth || window.innerWidth;
   const height = container.clientHeight || window.innerHeight;
@@ -274,7 +273,14 @@ function mountMarble(container, { onScore, onHint }, config = {}) {
   let started = false;
   let forwardSpeed = 5.5;
   let velX = 0;
-  const reportBest = makeBestTracker('marble', onHint);
+  // reportBest's onHint fires the shared .hint-text toast, which has no z-index and paints
+  // after .game-mount in the DOM -- it renders on top of ANY overlay shown that frame. gameOver()
+  // calls reportBest() synchronously right before showOverlay(), so a fresh best used to draw its
+  // "New best!" toast smeared across the game-over card's own text. Capture the message instead
+  // and fold it into the overlay HTML below (same fix shape as the mount-hint/overlay bug fixed
+  // 2026-08-25).
+  let pendingBestHint = null;
+  const reportBest = makeBestTracker('marble', (msg) => { pendingBestHint = msg; });
   let shakeT = 0;
   let invulnT = 0;
 
@@ -290,14 +296,16 @@ function mountMarble(container, { onScore, onHint }, config = {}) {
   function showOverlay(html) { overlay.innerHTML = html; overlay.style.display = 'flex'; }
   function hideOverlay() { overlay.style.display = 'none'; }
 
-  function startRun() { started = true; hideOverlay(); }
+  function startRun() { started = true; hideOverlay(); onHint(gt('hint_marble', '左右にドラッグしてバランスを取ろう！傾斜に流されないよう気をつけて')); }
   showOverlay(`<div style="font-size:34px;">🔮</div><div style="font-weight:800; font-size:17px;">${gt('marble_title', 'エレメント・マーブル')}</div><div style="font-size:13px; opacity:0.85; max-width:240px;">${gt('marble_intro', '左右にドラッグして傾斜の流れに逆らい、コースを転がり続けよう。結晶を集めるとボーナス！')}</div><div style="margin-top:6px; font-size:13px; opacity:0.7;">${gt('tap_to_start', 'タップでスタート')}</div>`);
 
   function gameOver() {
     dead = true;
     sfx.gameover();
+    pendingBestHint = null;
     reportBest(score);
-    showOverlay(`<div style="font-size:30px;">💥</div><div style="font-weight:800; font-size:18px;">${gt('score_label', 'スコア')}: ${score}</div><div style="font-size:13px; opacity:0.75;">${gt('restart_hint', 'タップでリスタート')}</div>`);
+    const bestLine = pendingBestHint ? `<div style="font-size:13px; color:#ffd166; margin-top:2px;">${pendingBestHint}</div>` : '';
+    showOverlay(`<div style="font-size:30px;">💥</div><div style="font-weight:800; font-size:18px;">${gt('score_label', 'スコア')}: ${score}</div>${bestLine}<div style="font-size:13px; opacity:0.75;">${gt('restart_hint', 'タップでリスタート')}</div>`);
   }
 
   function resetRun() {

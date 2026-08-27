@@ -29,7 +29,6 @@ const HAZARD_STRIPE = 0x2a1010;
 const GATE_GLOW = 0xffe9a8;
 
 function mountSpiral(container, { onScore, onHint }, config = {}) {
-  onHint(gt('hint_spiral', 'ドラッグでタワーを回して、隙間に落ちよう！属性ゲートを通るとボーナス'));
   container.style.position = 'relative';
   // Defensive fallback: if this mounts before the container has been laid out (rare timing edge
   // case -- e.g. a fast card swap), clientWidth/Height can briefly read 0, which would divide by
@@ -111,6 +110,42 @@ function mountSpiral(container, { onScore, onHint }, config = {}) {
   const SEG_H = 0.5;
   const SEG_D = 1.05;
   const RING_GAP_Y = 3.0;
+
+  // task108 (MSI, 2026-08-23, user request): purely decorative -- a real twisting ribbon wound
+  // around the tower so the silhouette actually reads as a *spiral* (matching this game's own
+  // name) instead of Helix Jump's signature "plain stack of rotating discs" look. Deliberately
+  // NOT touching ring/ball/collision code at all: the ball's fixed-X/Z-only-falls-in-Y design
+  // (see file header) means giving the RINGS themselves a lateral spiral offset would need
+  // reworking the gap-alignment math that assumes a fixed ball position under a purely-Y-rotating
+  // tower -- too large a change to make safely without a way to verify it deep into actual
+  // gameplay. This ribbon is a separate, non-interactive mesh riding along on `tower` (so it
+  // still turns with player input, staying visually attached) that never intersects the ball.
+  {
+    const RIBBON_TURNS = 90, RIBBON_DEPTH = 900, RIBBON_R = RING_R + 0.35, RIBBON_POINTS = 720;
+    const pts = [];
+    for (let i = 0; i <= RIBBON_POINTS; i++) {
+      const f = i / RIBBON_POINTS;
+      const a = f * Math.PI * 2 * RIBBON_TURNS;
+      pts.push(new THREE.Vector3(Math.cos(a) * RIBBON_R, -f * RIBBON_DEPTH, Math.sin(a) * RIBBON_R));
+    }
+    const ribbonCurve = new THREE.CatmullRomCurve3(pts);
+    const ribbonGeo = new THREE.TubeGeometry(ribbonCurve, RIBBON_POINTS, 0.06, 5, false);
+    const ribbonColors = new Float32Array((ribbonGeo.attributes.position.count) * 3);
+    const tmpColor = new THREE.Color();
+    for (let i = 0; i < ribbonGeo.attributes.position.count; i++) {
+      const f = (i / ribbonGeo.attributes.position.count) * ELEMENT_COLORS.length;
+      tmpColor.set(ELEMENT_COLORS[Math.floor(f) % ELEMENT_COLORS.length]);
+      ribbonColors[i * 3] = tmpColor.r; ribbonColors[i * 3 + 1] = tmpColor.g; ribbonColors[i * 3 + 2] = tmpColor.b;
+    }
+    ribbonGeo.setAttribute('color', new THREE.BufferAttribute(ribbonColors, 3));
+    const ribbonMat = new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.35, metalness: 0.15, emissiveIntensity: 0.25,
+      emissive: 0xffffff, transparent: true, opacity: 0.85,
+    });
+    const ribbon = new THREE.Mesh(ribbonGeo, ribbonMat);
+    ribbon.position.y = -RING_GAP_Y * 2;
+    tower.add(ribbon);
+  }
 
   const segGeo = new THREE.BoxGeometry(SEG_W, SEG_H, SEG_D);
   const gateGeo = new THREE.BoxGeometry(SEG_W, SEG_H * 1.15, SEG_D);
@@ -220,7 +255,12 @@ function mountSpiral(container, { onScore, onHint }, config = {}) {
   let dead = false;
   let started = false;
   let fallSpeed = 2.6;
-  const reportBest = makeBestTracker('spiral', onHint);
+  // See marble.js's reportBest comment: gameOver() calls reportBest() synchronously right
+  // before showOverlay(), and the shared .hint-text toast (no z-index, paints after .game-mount)
+  // would render on top of the game-over card. Capture the message and fold it into the overlay
+  // HTML instead of letting it fire as a toast.
+  let pendingBestHint = null;
+  const reportBest = makeBestTracker('spiral', (msg) => { pendingBestHint = msg; });
   let shakeT = 0;
   let invulnT = 0;
 
@@ -233,14 +273,17 @@ function mountSpiral(container, { onScore, onHint }, config = {}) {
   function startRun() {
     started = true;
     hideOverlay();
+    onHint(gt('hint_spiral', 'ドラッグでタワーを回して、隙間に落ちよう！属性ゲートを通るとボーナス'));
   }
   showOverlay(`<div style="font-size:34px;">🌀</div><div style="font-weight:800; font-size:17px;">${gt('spiral_title', 'エレメント・スパイラル')}</div><div style="font-size:13px; opacity:0.85; max-width:240px;">${gt('spiral_intro', 'ドラッグしてタワーを回し、隙間を狙って落ちよう。属性ゲート(光る段)を通るとボーナス！')}</div><div style="margin-top:6px; font-size:13px; opacity:0.7;">${gt('tap_to_start', 'タップでスタート')}</div>`);
 
   function gameOver() {
     dead = true;
     sfx.gameover();
+    pendingBestHint = null;
     reportBest(score);
-    showOverlay(`<div style="font-size:30px;">💥</div><div style="font-weight:800; font-size:18px;">${gt('score_label', 'スコア')}: ${score}</div><div style="font-size:13px; opacity:0.75;">${gt('restart_hint', 'タップでリスタート')}</div>`);
+    const bestLine = pendingBestHint ? `<div style="font-size:13px; color:#ffd166; margin-top:2px;">${pendingBestHint}</div>` : '';
+    showOverlay(`<div style="font-size:30px;">💥</div><div style="font-weight:800; font-size:18px;">${gt('score_label', 'スコア')}: ${score}</div>${bestLine}<div style="font-size:13px; opacity:0.75;">${gt('restart_hint', 'タップでリスタート')}</div>`);
   }
 
   function resetRun() {

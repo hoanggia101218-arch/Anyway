@@ -57,11 +57,11 @@
   }
 
   const BRUSHES = [
-    { type: CELL.WALL, icon: '🧱', label: '壁' },
-    { type: CELL.HAZARD, icon: '🔥', label: '危険' },
-    { type: CELL.START, icon: '🚩', label: 'スタート' },
-    { type: CELL.GOAL, icon: '🏁', label: 'ゴール' },
-    { type: CELL.EMPTY, icon: '🧹', label: '消す' },
+    { type: CELL.WALL, icon: '🧱', key: 'maze_cell_wall', label: '壁' },
+    { type: CELL.HAZARD, icon: '🔥', key: 'maze_cell_hazard', label: '危険' },
+    { type: CELL.START, icon: '🚩', key: 'maze_cell_start', label: 'スタート' },
+    { type: CELL.GOAL, icon: '🏁', key: 'maze_cell_goal', label: 'ゴール' },
+    { type: CELL.EMPTY, icon: '🧹', key: 'maze_cell_erase', label: '消す' },
   ];
   const CELL_COLORS = {
     [CELL.EMPTY]: '#20222a', [CELL.WALL]: '#5a5f6e', [CELL.HAZARD]: '#a83232',
@@ -169,7 +169,7 @@
     const brushBtns = BRUSHES.map((b) => {
       const btn = document.createElement('button');
       btn.className = 'mz-brush' + (b.type === selectedBrush ? ' selected' : '');
-      btn.innerHTML = `<span class="mz-brush-icon">${b.icon}</span><span>${b.label}</span>`;
+      btn.innerHTML = `<span class="mz-brush-icon">${b.icon}</span><span>${gt(b.key, b.label)}</span>`;
       btn.addEventListener('click', () => {
         selectedBrush = b.type;
         brushBtns.forEach((bb, i) => bb.classList.toggle('selected', BRUSHES[i].type === b.type));
@@ -186,7 +186,7 @@
     titleInput.className = 'mz-title-input';
     titleInput.type = 'text';
     titleInput.maxLength = 24;
-    titleInput.placeholder = 'コースのタイトル';
+    titleInput.placeholder = gt('maze_title_placeholder', 'コースのタイトル');
     tray.appendChild(titleInput);
 
     const confirmBtn = document.createElement('button');
