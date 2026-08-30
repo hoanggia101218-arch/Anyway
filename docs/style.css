@@ -245,6 +245,15 @@ html, body {
    these two ship a "tap-to-start" overlay that masked it until the overlay-vs-hint fix landed. */
 .card[data-game-id="marble"] .hint-text { bottom: calc(270px + var(--safe-bottom)); }
 .card[data-game-id="spiral"] .hint-text { bottom: calc(380px + var(--safe-bottom)); }
+/* task108(MSI, 2026-08-29 precision audit): unlike flow/fort/marble/spiral above, hex's board is
+   vertically centered across the FULL canvas height (mountHex's layout() reserves no top HUD_H,
+   see games.js) and is width-constrained to ~7 rows tall, so it fills roughly canvas y 183-617px
+   on a 400x800 card -- landing squarely ON TOP of the default bottom:204px hint band (unlike the
+   other games where the fix needed to move the hint UP, here it needs to move DOWN into the gap
+   between the grid's bottom edge and .overlay-bottom's title text, which starts at bottom:92px).
+   Confirmed via headless screenshot: hint text was smeared across the hex grid's colored tiles,
+   low-contrast and hard to read against the saturated fill colors. */
+.card[data-game-id="hex"] .hint-text { bottom: calc(145px + var(--safe-bottom)); }
 
 .dpad {
   position: absolute; bottom: calc(86px + var(--safe-bottom)); left: 50%; transform: translateX(-50%);

@@ -154,6 +154,18 @@
 
   function registerStages(list) { STAGE_LIST.push(...(list || [])); }
 
+  // task84 (HP, 2026-08-29): STAGE_LIST is filled by 9 separate registerStages() calls (one per
+  // batch of ~6 stages each already easy->normal->hard internally), so the *global* order used to
+  // be batch-major: easy1-3,normal1-3,hard1-3, easy4-5,normal4-5,hard4-5, ... repeated 9x. A solo
+  // player iterating STAGE_LIST in that order hits hard_1 as their 7th stage (right after only 6
+  // warm-up stages), then drops back to easy right after clearing hard_3 -- a sawtooth curve, not
+  // a progression. Array.prototype.sort is stable (ES2019+), so this reorders to
+  // easy(all)->normal(all)->hard(all) while preserving each tier's original batch order.
+  const DIFF_RANK = { easy: 0, normal: 1, hard: 2 };
+  function byDifficulty(list) {
+    return list.slice().sort((a, b) => (DIFF_RANK[a.difficulty] ?? 99) - (DIFF_RANK[b.difficulty] ?? 99));
+  }
+
   // ---------- Block character rendering (task79の指示通り: 影絵調の四角形の積み重ね+胸のコア) ----------
   function drawBlockChar(ctx, sx, sy, scale, color, facing, walkPhase, dead) {
     ctx.save();
@@ -385,7 +397,7 @@
 
   // ---------- Solo mode ----------
   function runSolo(container, canvas, ctx, { onScore, onHint }, elementColor) {
-    const stages = STAGE_LIST;
+    const stages = byDifficulty(STAGE_LIST);
     let stageIdx = 0;
     let p = null, stageStartAt = 0, closed = false, cleared = 0, walkPhase = 0, facing = 1;
     const ctrl = { dx: 0, jump: false };
@@ -466,7 +478,7 @@
   function runCoop(container, canvas, ctx, { onScore, onHint }, elementColor) {
     const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const myId = 'td_' + Math.random().toString(36).slice(2, 8);
-    const coopStages = STAGE_LIST.filter((s) => s.coop);
+    const coopStages = byDifficulty(STAGE_LIST.filter((s) => s.coop));
     const MATCH_WINDOW_MS = 20000;
     const LOBBY_WAIT_MS = 5000;
     const ADVANCE_TIMEOUT_MS = 25000;

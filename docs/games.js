@@ -2244,6 +2244,220 @@ function mountRunner(container, { onScore, onHint }, config = {}) {
   };
 }
 
+// ---------- 21. Element Connect (パズル, Onet Connect/PaoPao風ペア消し) ----------
+// task86(調査主導開発): 2026-08-29のWebSearch調査でYandex Gamesに定番の"Onet Connect
+// (PaoPao)"型ペアマッチが確認できた。同じ絵柄2枚を、曲がり角2回以内の線でつなげると消せる
+// という核メカニクスだけを抽出し、絵柄は既存10属性精霊(SPIRITSHOP_ELEMENTSを再利用)にした
+// 自作オリジナル。コード(経路探索・盤面生成)は本ファイル独自実装で、既存作品のコードは
+// 一切参照していない。findConnectPath()は「直進0コスト・方向転換1コスト」の0-1 BFSで、
+// 盤面の外周1マス分の余白(パディング)を経路が通れるようにしてあるので、盤の端同士も
+// 定番のOnet同様「壁の外を回る」形でつながる。
+const CONNECT_COLS = 8, CONNECT_ROWS = 5; // 40マス = 20ペア = 10属性 x 4枚ちょうど
+function findConnectPath(grid, R, C, r1, c1, r2, c2) {
+  const isOpen = (r, c) => r >= 0 && r < R && c >= 0 && c < C &&
+    (grid[r][c] == null || (r === r1 && c === c1) || (r === r2 && c === c2));
+  if (!isOpen(r1, c1) || !isOpen(r2, c2)) return null;
+  const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  const key = (r, c, d) => r + ',' + c + ',' + d;
+  const best = new Map(), parent = new Map();
+  best.set(key(r1, c1, -1), 0);
+  const dq = [{ r: r1, c: c1, d: -1, turns: 0 }];
+  let goal = null;
+  while (dq.length) {
+    const cur = dq.shift();
+    if (cur.r === r2 && cur.c === c2) { goal = cur; break; }
+    for (let d = 0; d < 4; d++) {
+      const nr = cur.r + DIRS[d][0], nc = cur.c + DIRS[d][1];
+      if (!isOpen(nr, nc)) continue;
+      const turnCost = (cur.d === -1 || cur.d === d) ? 0 : 1;
+      const nt = cur.turns + turnCost;
+      if (nt > 2) continue;
+      const k = key(nr, nc, d);
+      if (best.has(k) && best.get(k) <= nt) continue;
+      best.set(k, nt);
+      const nxt = { r: nr, c: nc, d, turns: nt };
+      parent.set(k, cur);
+      if (turnCost === 0) dq.unshift(nxt); else dq.push(nxt);
+    }
+  }
+  if (!goal) return null;
+  const path = [[goal.r, goal.c]];
+  let node = goal;
+  while (!(node.r === r1 && node.c === c1)) {
+    node = parent.get(key(node.r, node.c, node.d));
+    path.push([node.r, node.c]);
+  }
+  path.reverse();
+  return path;
+}
+function mountConnect(container, { onScore, onHint }) {
+  const roundSec = 60;
+  const rows = CONNECT_ROWS, cols = CONNECT_COLS;
+  const R = rows + 2, C = cols + 2; // 外周1マスは経路専用のパディング(見えないが通行可)
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  onHint(gt('hint_connect', '同じ精霊を2つタップしてつなげよう！曲がり角2回以内でつながる相手だけが消せるよ'));
+  const reportBest = makeBestTracker('connect', onHint);
+
+  let cellSize, originX, originY;
+  function layout() {
+    cellSize = Math.min(canvas.width / (cols + 2), canvas.height / (rows + 2)) * 0.94;
+    originX = (canvas.width - cellSize * (cols + 2)) / 2;
+    originY = (canvas.height - cellSize * (rows + 2)) / 2;
+  }
+  function cellCenter(r, c) { return [originX + c * cellSize + cellSize / 2, originY + r * cellSize + cellSize / 2]; }
+
+  let grid, score, served, t, dead, deadT, selected, burst, flashPath, combo;
+  function collectByType() {
+    const map = new Map();
+    for (let r = 1; r <= rows; r++) for (let c = 1; c <= cols; c++) {
+      const v = grid[r][c];
+      if (v == null) continue;
+      if (!map.has(v)) map.set(v, []);
+      map.get(v).push([r, c]);
+    }
+    return map;
+  }
+  function hasAnyMove() {
+    for (const cells of collectByType().values()) {
+      for (let i = 0; i < cells.length; i++)
+        for (let j = i + 1; j < cells.length; j++)
+          if (findConnectPath(grid, R, C, cells[i][0], cells[i][1], cells[j][0], cells[j][1])) return true;
+    }
+    return false;
+  }
+  function reshuffleRemaining() {
+    const cells = [], vals = [];
+    for (let r = 1; r <= rows; r++) for (let c = 1; c <= cols; c++) {
+      if (grid[r][c] != null) { cells.push([r, c]); vals.push(grid[r][c]); }
+    }
+    for (let attempt = 0; attempt < 40; attempt++) {
+      for (let i = vals.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [vals[i], vals[j]] = [vals[j], vals[i]];
+      }
+      cells.forEach(([r, c], i) => { grid[r][c] = vals[i]; });
+      if (hasAnyMove()) return;
+    }
+  }
+  function generateBoard() {
+    grid = Array.from({ length: R }, () => Array(C).fill(null));
+    const pairCount = (rows * cols) / 2;
+    const values = [];
+    for (let i = 0; i < pairCount; i++) { const el = i % SPIRITSHOP_ELEMENTS.length; values.push(el, el); }
+    for (let i = values.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [values[i], values[j]] = [values[j], values[i]];
+    }
+    let k = 0;
+    for (let r = 1; r <= rows; r++) for (let c = 1; c <= cols; c++) grid[r][c] = values[k++];
+    if (!hasAnyMove()) reshuffleRemaining();
+  }
+  function boardEmpty() {
+    for (let r = 1; r <= rows; r++) for (let c = 1; c <= cols; c++) if (grid[r][c] != null) return false;
+    return true;
+  }
+  function reset() {
+    score = 0; served = 0; t = 0; dead = false; deadT = 0; selected = null; burst = []; flashPath = null;
+    combo = makeCombo(1500);
+    generateBoard();
+  }
+  layout();
+  reset();
+
+  function tryMatch(r, c) {
+    const sel = selected;
+    selected = null;
+    if (grid[sel.r][sel.c] !== grid[r][c]) { combo.miss(); selected = { r, c }; return; }
+    const path = findConnectPath(grid, R, C, sel.r, sel.c, r, c);
+    if (!path) { combo.miss(); selected = { r, c }; return; }
+    grid[sel.r][sel.c] = null; grid[r][c] = null;
+    const streak = combo.hit(onHint);
+    score += 10 + Math.min(streak, 12) * 2;
+    served++;
+    onScore(score);
+    const [x1, y1] = cellCenter(sel.r, sel.c), [x2, y2] = cellCenter(r, c);
+    spawnBurst(burst, x1, y1, '#fff', 8);
+    spawnBurst(burst, x2, y2, '#fff', 8);
+    flashPath = { pts: path.map(([pr, pc]) => cellCenter(pr, pc)), t: 0.28 };
+    if (boardEmpty()) {
+      score += 50; onScore(score); reportBest(score);
+      onHint(gt('hint_connect_cleared', '✨ 全消し達成！新しい盤面でボーナス+50'));
+      generateBoard();
+    } else if (!hasAnyMove()) {
+      reshuffleRemaining();
+    }
+  }
+
+  function pointerdown(e) {
+    if (dead) { reset(); return; }
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left;
+    const y = (e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top;
+    const c = Math.floor((x - originX) / cellSize), r = Math.floor((y - originY) / cellSize);
+    if (r < 1 || r > rows || c < 1 || c > cols || grid[r][c] == null) return;
+    if (!selected) { selected = { r, c }; return; }
+    if (selected.r === r && selected.c === c) { selected = null; return; }
+    tryMatch(r, c);
+  }
+  canvas.addEventListener('pointerdown', pointerdown);
+
+  const stop = loopRAF((dt) => {
+    if (dead) {
+      deadT += dt;
+      if (deadT > 2.2) reset();
+    } else {
+      t += dt;
+      if (t >= roundSec) { dead = true; deadT = 0; sfx.gameover(); reportBest(score); }
+    }
+    if (flashPath) { flashPath.t -= dt; if (flashPath.t <= 0) flashPath = null; }
+
+    ctx.fillStyle = '#1a1030'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)'; ctx.fillRect(10, 8, canvas.width - 20, 7);
+    ctx.fillStyle = '#ffd23f'; ctx.fillRect(10, 8, (canvas.width - 20) * Math.max(0, 1 - t / roundSec), 7);
+
+    const tileR = cellSize * 0.42;
+    for (let r = 1; r <= rows; r++) for (let c = 1; c <= cols; c++) {
+      const v = grid[r][c];
+      if (v == null) continue;
+      const el = SPIRITSHOP_ELEMENTS[v];
+      const [x, y] = cellCenter(r, c);
+      const isSel = selected && selected.r === r && selected.c === c;
+      ctx.beginPath(); ctx.arc(x, y, tileR, 0, Math.PI * 2);
+      ctx.globalAlpha = 0.9; ctx.fillStyle = el.color; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.strokeStyle = isSel ? '#ffffff' : 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = isSel ? 4 : 2; ctx.stroke();
+      ctx.font = `${Math.max(12, tileR)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(el.icon, x, y);
+    }
+
+    if (flashPath && flashPath.pts.length > 1) {
+      ctx.globalAlpha = Math.max(0, flashPath.t / 0.28);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.lineJoin = 'round';
+      ctx.beginPath();
+      flashPath.pts.forEach(([x, y], i) => { if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    drawBurst(ctx, burst, dt);
+
+    if (dead) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(gt('game_over', 'ゲームオーバー'), canvas.width / 2, canvas.height / 2 - 16);
+      ctx.font = '18px sans-serif';
+      ctx.fillText(`✅ ${served}`, canvas.width / 2, canvas.height / 2 + 16);
+    }
+  });
+
+  return () => {
+    stop();
+    canvas.removeEventListener('pointerdown', pointerdown);
+    canvas.remove();
+  };
+}
+
 // ---------- 22. Element Hex (パズル, Hexellent/Blocky Blast風カラーマッチ) ----------
 // task108 (MSI, 2026-08-21): Poki実機調査で現在トレンド4位だった"Blocky Blast Puzzle"系の
 // グリッド消しパズルと、事前WebSearch調査のHexellent(ヘックスパズル)を参考にした自作
@@ -3364,6 +3578,9 @@ const GAME_DEFS = [
   // mountRunner定義は本ファイル上部。
   { id: 'runner', title: '障害物よけランナー', genre: 'アクション', mount: mountRunner,
     params: [{ key: 'obstacleSpeedStart', label: '障害物の速さ', min: 180, max: 360, step: 20, default: 260 }] },
+  // task86: Onet Connect/PaoPao(Yandex Games定番)着想のペアマッチパズル。曲がり角2回以内
+  // でつながる同じ精霊2枚を消す自作オリジナル。mountConnect定義は本ファイル上部。
+  { id: 'connect', title: 'エレメント・コネクト', genre: 'パズル', mount: mountConnect },
   // 2026-08-20 DELL: 縦型フィード専用の新規3Dゲーム。回転するタワーのリングを縫って落ち続ける
   // オリジナル降下ゲーム(genre-inspiredだがどの既存作品のコード・素材も再利用していない、
   // 独自の10属性テーマ+ゲート/ハザード判定)。own file(spiral.js)なので royale/cup/trapdojo と
