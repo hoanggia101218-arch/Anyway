@@ -655,14 +655,17 @@
     const canvas = makeCanvas(container);
     const ctx = canvas.getContext('2d');
     let stopEngine = null;
+    let destroyed = false;
 
     showSelectScreen(container, (mode, elementId) => {
+      if (destroyed) return; // mount() was torn down while the select screen was still up (e.g. a queued click racing an exit); starting an engine now would leak a setInterval loop nothing can ever stop.
       const el = ELEMENTS.find((e) => e.id === elementId) || ELEMENTS[0];
       if (mode === 'solo') stopEngine = runSolo(container, canvas, ctx, { onScore, onHint }, el.color);
       else stopEngine = runCoop(container, canvas, ctx, { onScore, onHint }, el.color);
     });
 
     return () => {
+      destroyed = true;
       if (stopEngine) stopEngine();
       canvas.remove();
       container.querySelectorAll(':scope > div').forEach((d) => d.remove());

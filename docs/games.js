@@ -852,19 +852,33 @@ function mountMerge(container, { onScore, onHint }, config = {}) {
   // ever holds still-alive entries (dead ones are spliced during render), so checking against
   // all of them -- not just very-fresh ones -- is what actually prevents that stacking.
   function spawnPopText(x, y, text) {
-    let px = x;
+    // The NEXT preview (label + orb, drawn around x=canvas.width-wallX-22, y in ~53-106 -- see
+    // the block below) sits in the same top-right area a merge can land in. A label can drift
+    // for up to 0.8s at -40px/s, so anything that could still be rendering there while passing
+    // through that y range gets steered clear of its footprint instead of overlapping it. This
+    // has to be an upper BOUND applied throughout the anti-overlap loop below, not a one-shot
+    // clamp applied after it -- clamping only at the end collapsed every conflicting label in
+    // this band onto the exact same boundary x (measured: up to 28 distinct labels stacked on
+    // one pixel column in a single frame), defeating the separation the loop had just found.
+    const nextBandClamp = (y > 45 && y < 145) ? canvas.width - wallX - 52 : Infinity;
+    let px = Math.min(x, nextBandClamp);
     // Push clear of any conflicting label and re-scan from the top, since moving past one can
     // land on top of another -- a single top-to-bottom pass can't guarantee that (verified via
     // headless test: a flat one-shot offset still left some labels 4px apart). The guard caps
     // worst-case iterations; if it's ever hit the label still renders, just not perfectly spread.
+    // Push away from whichever wall the label started nearer to -- always pushing right used to
+    // chain unboundedly when a cascade clustered near the right wall, running labels clean off
+    // the canvas (measured: x reached 605 on a 390-wide canvas, fully invisible).
+    const pushDir = x < canvas.width / 2 ? 1 : -1;
     for (let guard = 0; guard < 20; guard++) {
       // Compare against each existing label's CURRENT (already-drifted) y, not its spawn y --
       // an older label has drifted up by p.t*40 already, so a raw-spawn-y comparison understates
       // how close it actually renders to a brand-new label spawning nearby a moment later.
       const conflict = popText.find(p => Math.abs((p.y - p.t * 40) - y) < 16 && Math.abs(p.x - px) < 22);
       if (!conflict) break;
-      px = conflict.x + 22;
+      px = Math.min(conflict.x + 22 * pushDir, nextBandClamp);
     }
+    px = Math.max(wallX + 14, Math.min(canvas.width - wallX - 14, px));
     popText.push({ x: px, y, t: 0, text });
   }
 
@@ -3527,6 +3541,167 @@ function mountTrail(container, { onScore, onHint }) {
   };
 }
 
+// ---------- 24. Element Spar (格闘デュエル, タイミングパリィ式, 自作オリジナル) ----------
+// task86(調査主導開発): 2026-08-30、WebSearchでPoki 2026年8月ランキングに新規で
+// 「Karate Fighter」(1vs1格闘)がランクインしたことを確認。ヒットボックス同士がぶつかり合う
+// 本格アクション格闘は攻防の駆け引き調整が難しく単発サイクルでの拙速実装は品質リスクが高い
+// と前サイクルnotesで判断していたため、代わりに本ファイルのaim/stackで実績のある「タイミング
+// 判定」を土台に、3レーンから降ってくる相手の攻撃を正しいレーン・正しい瞬間にタップして
+// 受け流す(パリィ)デュエルとして企画。パリィ成功=反撃ダメージ+自分は無傷、失敗(タップなし/
+// 判定線を通過)=被弾、というシンプルな1アクションに攻防を統合することで、格闘の手触りを
+// 保ちつつ実装・自己テストの両面でのリスクを抑えた。ファイターは既存SPIRITSHOP_ELEMENTS
+// (絵柄は流用、コード・演出は新規)から毎試合ランダムに2体選出。HPデュエル+短い自動リセット
+// はmountFortと同じ勝敗ラウンド制パターンを踏襲。
+function mountSpar(container, { onScore, onHint }) {
+  onHint(gt('hint_spar', '3レーンに来る相手の攻撃を、輪が判定ラインに重なった瞬間タップして受け流せ！パリィ成功で反撃ダメージ'));
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  const reportBest = makeBestTracker('spar', onHint);
+
+  const MAX_HP = 100;
+  const LANES = 3;
+  const SPAWN_Y = 96;
+  const WINDOW_PX = 34; // パリィ成立の許容範囲(判定ラインからの距離)
+  const MISS_PX = 46; // これを超えて判定ラインを通過したら被弾扱い
+  const BOTTOM_SAFE = 140 + getSafeBottom();
+  function judgeY() { return canvas.height - BOTTOM_SAFE - 70; }
+  function laneX(i) { return canvas.width * ((i + 0.5) / LANES); }
+
+  let playerHp, aiHp, attacks, particles, combo, score, elapsed, spawnT, ended, endT, playerEl, aiEl;
+  function reset() {
+    playerHp = MAX_HP; aiHp = MAX_HP; attacks = []; particles = [];
+    combo = makeCombo(2200); score = 0; elapsed = 0; spawnT = 0.6;
+    ended = null; endT = 0;
+    const pick = [...SPIRITSHOP_ELEMENTS].sort(() => Math.random() - 0.5);
+    playerEl = pick[0]; aiEl = pick[1];
+  }
+  reset();
+
+  function spawnAttack() {
+    const lane = Math.floor(Math.random() * LANES);
+    const speedUp = Math.min(0.4, elapsed * 0.01); // 難易度カーブ: 経過時間で最大40%速く(下限あり)
+    attacks.push({ lane, y: SPAWN_Y, travel: 1.15 * (1 - speedUp), t: 0, resolved: false });
+  }
+
+  function resolveLane(lane) {
+    const jy = judgeY();
+    // そのレーンで判定ライン付近(WINDOW_PX以内)にある、最も判定ラインに近い未解決の攻撃を探す
+    const idx = attacks.findIndex(a => a.lane === lane && !a.resolved && Math.abs(a.y - jy) <= WINDOW_PX);
+    if (idx === -1) { combo.miss(); return; }
+    const a = attacks[idx];
+    a.resolved = true;
+    const streak = combo.hit(onHint);
+    const dmg = 9 + Math.min(streak, 10);
+    aiHp = Math.max(0, aiHp - dmg);
+    score += dmg; onScore(score);
+    spawnBurst(particles, laneX(lane), jy, playerEl.color, 14);
+    beep(520 + streak * 12, 0.08, 'square', 0.1);
+  }
+
+  function pointerdown(e) {
+    if (ended) { reset(); return; }
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left;
+    const lane = Math.max(0, Math.min(LANES - 1, Math.floor(x / (canvas.width / LANES))));
+    resolveLane(lane);
+  }
+  canvas.addEventListener('pointerdown', pointerdown);
+
+  const stop = loopRAF((dt) => {
+    if (ended) {
+      endT += dt;
+      if (endT > 1.4) reset();
+    } else {
+      elapsed += dt;
+      spawnT -= dt;
+      const spawnEvery = Math.max(0.55, 1.15 - elapsed * 0.01);
+      if (spawnT <= 0) { spawnT = spawnEvery; spawnAttack(); }
+      const jy = judgeY();
+      for (let i = attacks.length - 1; i >= 0; i--) {
+        const a = attacks[i];
+        a.t += dt;
+        a.y = SPAWN_Y + (jy - SPAWN_Y) * (a.t / a.travel); // travel超過後もそのまま延長(判定ライン通過を検知するため)
+        if (a.resolved) { attacks.splice(i, 1); continue; }
+        if (a.y - jy > MISS_PX) {
+          attacks.splice(i, 1);
+          combo.miss();
+          const dmg = 7 + Math.floor(Math.random() * 6);
+          playerHp = Math.max(0, playerHp - dmg);
+          spawnBurst(particles, laneX(a.lane), jy, '#ff5a5a', 10);
+          shakeEl(canvas, 90);
+        }
+      }
+      if (aiHp <= 0) {
+        ended = 'win'; endT = 0; score += 150; onScore(score); reportBest(score);
+        sfx.win(); onHint(gt('hint_spar_win', '🏆 パリィの嵐で撃破！勝利！'));
+        spawnBurst(particles, laneX(1), 60, aiEl.color, 26);
+      } else if (playerHp <= 0) {
+        ended = 'lose'; endT = 0; onScore(score); reportBest(score);
+        sfx.gameover(); onHint(gt('hint_spar_lose', '…力尽きた。次の試合へ'));
+        spawnBurst(particles, laneX(1), canvas.height - BOTTOM_SAFE - 20, playerEl.color, 26);
+      }
+    }
+
+    ctx.fillStyle = '#150f22'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const jy = judgeY();
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+    for (let i = 1; i < LANES; i++) {
+      ctx.beginPath(); ctx.moveTo(canvas.width * (i / LANES), 70); ctx.lineTo(canvas.width * (i / LANES), jy + 50); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(0, jy); ctx.lineTo(canvas.width, jy); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(14, 14, canvas.width / 2 - 24, 10);
+    ctx.fillStyle = playerEl.color; ctx.fillRect(14, 14, (canvas.width / 2 - 24) * Math.max(0, playerHp / MAX_HP), 10);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(canvas.width / 2 + 10, 14, canvas.width / 2 - 24, 10);
+    const aiBarW = (canvas.width / 2 - 24) * Math.max(0, aiHp / MAX_HP);
+    ctx.fillStyle = aiEl.color; ctx.fillRect(canvas.width - 14 - aiBarW, 14, aiBarW, 10);
+    ctx.font = '20px sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(playerEl.icon, 14, 40);
+    ctx.textAlign = 'right';
+    ctx.fillText(aiEl.icon, canvas.width - 14, 40);
+
+    for (const a of attacks) {
+      const nearWindow = Math.abs(a.y - jy) <= WINDOW_PX;
+      ctx.beginPath(); ctx.arc(laneX(a.lane), a.y, 20, 0, Math.PI * 2);
+      ctx.fillStyle = aiEl.color; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.font = '18px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(aiEl.icon, laneX(a.lane), a.y);
+      if (nearWindow) {
+        ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(laneX(a.lane), a.y, 27, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+
+    const guardY = canvas.height - BOTTOM_SAFE - 20;
+    for (let i = 0; i < LANES; i++) {
+      ctx.beginPath(); ctx.arc(laneX(i), guardY, 22, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.font = '20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.fillText(playerEl.icon, laneX(i), guardY);
+    }
+
+    drawBurst(ctx, particles, dt);
+
+    if (ended) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 24px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(ended === 'win' ? gt('hint_spar_win_title', '勝利！') : gt('hint_spar_lose_title', '敗北…'), canvas.width / 2, canvas.height / 2 - 16);
+      ctx.font = '18px sans-serif';
+      ctx.fillText(`Score ${score}`, canvas.width / 2, canvas.height / 2 + 16);
+    }
+  });
+
+  return () => {
+    stop();
+    canvas.removeEventListener('pointerdown', pointerdown);
+    canvas.remove();
+  };
+}
+
 const GAME_DEFS = [
   { id: 'dodge', title: 'ブロック避け', genre: 'アクション', mount: mountDodge,
     params: [{ key: 'blockSpeed', label: 'ブロックの速さ', min: 120, max: 400, step: 20, default: 180 }] },
@@ -3605,6 +3780,10 @@ const GAME_DEFS = [
   // スライド塗りつぶしパズル。own code/オリジナル。8ステージは自作BFSソルバーで解けることを
   // 検証済み。詳細はmountTrail定義部のコメント参照。
   { id: 'trail', title: 'エレメント・トレイル', genre: 'パズル', mount: mountTrail },
+  // task86: Poki 2026年8月ランキングにランクインした「Karate Fighter」(格闘)着想。ヒット
+  // ボックス格闘は駆け引き調整の難易度が高いため、aim/stackと同じタイミング判定を土台にした
+  // パリィ式1vs1デュエルとして実装(コード・演出は新規)。mountSpar定義は本ファイル上部。
+  { id: 'spar', title: 'エレメント・スパー', genre: 'アクション', mount: mountSpar },
 ];
 
 window.GAME_DEFS = GAME_DEFS;

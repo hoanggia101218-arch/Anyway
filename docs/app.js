@@ -1077,7 +1077,15 @@ async function initFeed(user) {
   const guestExemptTabs = ['home', 'search', 'elements'];
 
   function openTab(tab) {
-    if (!guestExemptTabs.includes(tab) && user.isGuest) { location.reload(); return; }
+    // task108 (MSI, 2026-08-30 precision audit): this used to be a bare location.reload() --
+    // since the guest session lives only in an in-memory JS object (initAccount's onReady
+    // callback, never persisted to localStorage/cookies, see the guest-btn handler above),
+    // reloading silently threw the guest all the way back to the auth/onboarding screen with
+    // zero explanation, losing their entire feed scroll position/session just for tapping the
+    // "+" create button (or dm/profile). To a first-time guest this reads indistinguishable
+    // from the app crashing. Swapped for the same alert+i18n pattern already used for the
+    // minor age-gate two lines below -- keeps the guest on the page, tells them why, no data lost.
+    if (!guestExemptTabs.includes(tab) && user.isGuest) { alert(window.I18N ? window.I18N.t('guest_action_required') : 'この機能を使うにはアカウント登録が必要です。ログイン後にもう一度お試しください'); return; }
     // Age-gate (task 30 / legal/terms_of_service_ja.md 第2条): posting and DMs are
     // social/contact-risk features restricted to 13+. Club join/create is gated
     // separately inside the club panel itself, since that flow has its own UI states.
