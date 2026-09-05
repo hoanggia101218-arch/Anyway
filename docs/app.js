@@ -548,8 +548,12 @@ function showAuthModal(onReady) {
 }
 
 // ---------- Recommendation (local personalization only) ----------
-function pickNextGame(weights, lastId) {
-  const candidates = GAME_DEFS.filter(g => g.id !== lastId);
+// likedSet excludes already-liked games from resurfacing in the scroll feed
+// (per user request: a liked item shouldn't come back). Falls back to the
+// full catalog once everything has been liked, so the feed never runs dry.
+function pickNextGame(weights, lastId, likedSet) {
+  let candidates = GAME_DEFS.filter(g => g.id !== lastId && !(likedSet && likedSet.has(g.id)));
+  if (candidates.length === 0) candidates = GAME_DEFS.filter(g => g.id !== lastId);
   const total = candidates.reduce((sum, g) => sum + (weights[g.genre] || 1), 0);
   let r = Math.random() * total;
   for (const g of candidates) {
@@ -1029,7 +1033,7 @@ async function initFeed(user) {
     loaderObserver.disconnect();
     const loader = document.getElementById('loader');
     for (let i = 0; i < n; i++) {
-      const def = pickNextGame(weights, lastGameId);
+      const def = pickNextGame(weights, lastGameId, liked);
       lastGameId = def.id;
       const card = createCard(def);
       feed.insertBefore(card, loader);
@@ -1037,17 +1041,15 @@ async function initFeed(user) {
     loaderObserver.observe(loader);
   }
 
-  // your own saved posts show up first
-  myPosts.forEach((post) => {
-    const def = GAME_DEFS.find((g) => g.id === post.game_id);
-    if (!def) return;
-    const card = createCard(def, post.config || {}, user.handle || user.name, post.custom_title, user.id, post.id);
-    feed.insertBefore(card, document.getElementById('loader'));
-    lastGameId = def.id;
-  });
+  // Note: own posts intentionally do NOT appear in this scroll feed — they're
+  // already visible (and editable) from the profile panel's "my posts" grid
+  // (renderProfilePanel, myPosts). Surfacing them here too was redundant with
+  // that and made the feed open on your own content instead of discovery.
 
-  // initial batch
-  const initialDefs = [...GAME_DEFS].sort(() => Math.random() - 0.5);
+  // initial batch — excludes already-liked games for the same reason as
+  // appendCards above (falls back to the full catalog if everything's liked).
+  const initialPool = GAME_DEFS.filter((g) => !liked.has(g.id));
+  const initialDefs = (initialPool.length > 0 ? initialPool : GAME_DEFS).slice().sort(() => Math.random() - 0.5);
   for (const def of initialDefs) {
     const card = createCard(def);
     feed.insertBefore(card, document.getElementById('loader'));

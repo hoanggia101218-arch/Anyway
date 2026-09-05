@@ -232,6 +232,14 @@
       } else if (h.type === 'fake') {
         // looks identical to a static platform but is never solid -- the "デコイの床".
         draw.push({ ...h, kind: 'fake' });
+      } else if (h.type === 'fakespike') {
+        // kind:'spike'を流用して見た目を本物のトゲと完全一致させる(deadlyには入れない) --
+        // 「危険に見えて実は安全」という、fakeの逆方向のひっかけ。
+        draw.push({ ...h, kind: 'spike' });
+      } else if (h.type === 'phase') {
+        // kind:'static'を流用して見た目を本物の床/壁と完全一致させる(solidsには入れない) --
+        // 「塞がれているように見えて実は通り抜けられる」隠し通路トラップ。
+        draw.push({ ...h, kind: 'static' });
       } else if (h.type === 'faller') {
         const f = fallerState(h, elapsedMs);
         const r = { x: h.x, y: f.y, w: h.w, h: h.h };

@@ -3702,6 +3702,514 @@ function mountSpar(container, { onScore, onHint }) {
   };
 }
 
+// ---------- N. Bubble Shot (パズル) ----------
+// task86: Bubble Shooter(Poki/Yandex Games双方の定番ジャンル、Bubble Shooter系タイトルが
+// 長年上位常連)着想。狙いを定めて撃つ→同色3つ以上つながると消える、というシューティング×
+// マッチの核メカニクスだけを抽出し、絵柄は既存10属性精霊(SPIRITSHOP_ELEMENTS)を流用して
+// 自社IPに統一した自作オリジナル。GAME_DEFS登録は下記参照。
+function mountBubble(container, { onScore, onHint }, config = {}) {
+  const rowPushEvery = config.rowPushEvery ?? 5;
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  onHint(gt('hint_bubble', '上にドラッグして狙いを定め、指を離すと発射！同じ精霊を3つ以上つなげて消そう'));
+  const reportBest = makeBestTracker('bubble', onHint);
+
+  const BUBBLE_COLS = 8;
+  const ROWS = 26; // 表示範囲より十分大きく確保(新しい列の押し下げでシフトしても溢れない)
+  const BOTTOM_SAFE = 150 + getSafeBottom();
+  let cellSize, originX, originY, rowHeight, ballR, cannonX, cannonY, dangerY;
+  function layout() {
+    cellSize = canvas.width / (BUBBLE_COLS + 0.5);
+    rowHeight = cellSize * 0.87;
+    originX = cellSize * 0.25;
+    originY = 46;
+    ballR = cellSize * 0.42;
+    cannonX = canvas.width / 2;
+    cannonY = canvas.height - BOTTOM_SAFE;
+    dangerY = cannonY - cellSize * 1.3;
+  }
+  function colsForRow(r) { return (r % 2 === 0) ? BUBBLE_COLS : BUBBLE_COLS - 1; }
+  function cellCenter(r, c) {
+    const offset = (r % 2 === 1) ? cellSize / 2 : 0;
+    return [originX + c * cellSize + offset + cellSize / 2, originY + r * rowHeight + cellSize / 2];
+  }
+  function neighborsOf(r, c) {
+    return (r % 2 === 0)
+      ? [[r - 1, c - 1], [r - 1, c], [r, c - 1], [r, c + 1], [r + 1, c - 1], [r + 1, c]]
+      : [[r - 1, c], [r - 1, c + 1], [r, c - 1], [r, c + 1], [r + 1, c], [r + 1, c + 1]];
+  }
+  function inBounds(r, c) { return r >= 0 && r < ROWS && c >= 0 && c < colsForRow(r); }
+
+  let grid, score, shots, dead, deadT, combo, burst, ball, aimDir, aiming, nextEl, curEl, pool;
+  // 実際のバブルシューター定番作は素材の全種類より少ない色数(だいたい列数-2前後)しか盤面に
+  // 出さない -- 色数が多いほど同色3つを揃える確率が下がり、狙って消せず積み上がるだけの
+  // 理不尽な難易度になるため。10属性全部を毎回使うと最初の自己テストでスコアがほぼ0のまま
+  // 積み上がって即ゲームオーバーになる挙動を確認したので、10種のうち6種だけを毎ラウンド
+  // 抽選してプール化する(ラウンドごとに違う6種になり見た目の新鮮さも保てる)。
+  function randEl() { return pool[Math.floor(Math.random() * pool.length)]; }
+  function fillRow(r) { grid[r] = new Array(colsForRow(r)).fill(null).map(() => randEl()); }
+  function reset() {
+    pool = [...Array(SPIRITSHOP_ELEMENTS.length).keys()].sort(() => Math.random() - 0.5).slice(0, 6);
+    grid = [];
+    for (let r = 0; r < ROWS; r++) grid[r] = new Array(colsForRow(r)).fill(null);
+    for (let r = 0; r < 5; r++) fillRow(r);
+    score = 0; shots = 0; dead = false; deadT = 0; burst = [];
+    combo = makeCombo(2200);
+    ball = null; aiming = false; aimDir = { x: 0, y: -1 };
+    curEl = randEl(); nextEl = randEl();
+    onScore(score);
+  }
+  layout();
+  reset();
+
+  function occupiedNeighborsEmpty(r, c) {
+    return neighborsOf(r, c).filter(([nr, nc]) => inBounds(nr, nc) && grid[nr][nc] == null);
+  }
+  function findAnyEmpty(startR, startC) {
+    const seen = new Set([startR + '_' + startC]); const q = [[startR, startC]];
+    while (q.length) {
+      const [r, c] = q.shift();
+      if (inBounds(r, c) && grid[r][c] == null) return [r, c];
+      for (const [nr, nc] of neighborsOf(r, c)) {
+        const key = nr + '_' + nc;
+        if (!seen.has(key) && inBounds(nr, nc)) { seen.add(key); q.push([nr, nc]); }
+      }
+    }
+    return [0, Math.floor(BUBBLE_COLS / 2)];
+  }
+  function snapSlot(x, y, hit) {
+    let candidates = hit ? occupiedNeighborsEmpty(hit[0], hit[1]) : [];
+    if (!candidates.length) {
+      const col = Math.max(0, Math.min(BUBBLE_COLS - 1, Math.round((x - originX - cellSize / 2) / cellSize)));
+      candidates = [[0, col - 1], [0, col], [0, col + 1]].filter(([r, c]) => inBounds(r, c) && grid[r][c] == null);
+    }
+    if (!candidates.length) candidates = [findAnyEmpty(hit ? hit[0] : 0, hit ? hit[1] : Math.floor(BUBBLE_COLS / 2))];
+    let best = candidates[0], bestD = Infinity;
+    for (const [r, c] of candidates) {
+      const [cx, cy] = cellCenter(r, c);
+      const d = Math.hypot(x - cx, y - cy);
+      if (d < bestD) { bestD = d; best = [r, c]; }
+    }
+    return best;
+  }
+  function floodMatch(r, c) {
+    const val = grid[r][c];
+    const seen = new Set([r + '_' + c]); const group = [[r, c]]; const q = [[r, c]];
+    while (q.length) {
+      const [cr, cc] = q.shift();
+      for (const [nr, nc] of neighborsOf(cr, cc)) {
+        const key = nr + '_' + nc;
+        if (seen.has(key) || !inBounds(nr, nc) || grid[nr][nc] !== val) continue;
+        seen.add(key); group.push([nr, nc]); q.push([nr, nc]);
+      }
+    }
+    return group;
+  }
+  function dropFloaters() {
+    const anchored = new Set(); const q = [];
+    for (let c = 0; c < colsForRow(0); c++) if (grid[0][c] != null) { anchored.add('0_' + c); q.push([0, c]); }
+    while (q.length) {
+      const [r, c] = q.shift();
+      for (const [nr, nc] of neighborsOf(r, c)) {
+        const key = nr + '_' + nc;
+        if (anchored.has(key) || !inBounds(nr, nc) || grid[nr][nc] == null) continue;
+        anchored.add(key); q.push([nr, nc]);
+      }
+    }
+    const floaters = [];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < colsForRow(r); c++) {
+      if (grid[r][c] != null && !anchored.has(r + '_' + c)) floaters.push([r, c]);
+    }
+    for (const [r, c] of floaters) {
+      const [x, y] = cellCenter(r, c);
+      spawnBurst(burst, x, y, SPIRITSHOP_ELEMENTS[grid[r][c]].color, 10);
+      grid[r][c] = null;
+    }
+    return floaters.length;
+  }
+  function boardEmpty() {
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < colsForRow(r); c++) if (grid[r][c] != null) return false;
+    return true;
+  }
+  function pushDangerCheck() {
+    for (let r = ROWS - 1; r >= 0; r--) {
+      for (let c = 0; c < colsForRow(r); c++) {
+        if (grid[r][c] != null) {
+          const [, y] = cellCenter(r, c);
+          if (y + ballR >= dangerY) return true;
+        }
+      }
+    }
+    return false;
+  }
+  function pushNewRow() {
+    // 偶数行(8列)と奇数行(7列)が交互のオフセット六角配置のため、1行だけシフトすると
+    // 行のパリティ(偶奇)がズレて右端のバブルが消えてしまう(検証済み: 1行シフトだと
+    // 押し出しのたびに一部のバブルが無言で消失する)。2行まとめてシフトすればどの行も
+    // 元と同じパリティの位置に収まるため、内容が失われない。
+    for (let step = 0; step < 2; step++) {
+      for (let r = ROWS - 1; r > 0; r--) grid[r] = grid[r - 1].slice();
+      fillRow(0);
+    }
+  }
+
+  function placeBall(x, y, hit) {
+    const [r, c] = snapSlot(x, y, hit);
+    grid[r][c] = ball.el;
+    const group = floodMatch(r, c);
+    if (group.length >= 3) {
+      const streak = combo.hit(onHint);
+      let gain = 0;
+      for (const [gr, gc] of group) {
+        const [gx, gy] = cellCenter(gr, gc);
+        spawnBurst(burst, gx, gy, SPIRITSHOP_ELEMENTS[grid[gr][gc]].color, 10);
+        grid[gr][gc] = null;
+        gain += 10;
+      }
+      gain += Math.min(streak, 12) * 3;
+      gain += dropFloaters() * 15;
+      score += gain; onScore(score);
+      if (boardEmpty()) {
+        score += 80; onScore(score); reportBest(score);
+        onHint(gt('hint_bubble_cleared', '✨ 全消し達成！新しい盤面でボーナス+80'));
+        for (let rr = 0; rr < 5; rr++) fillRow(rr);
+      } else {
+        reportBest(score);
+      }
+    } else {
+      combo.miss();
+    }
+    ball = null;
+    if (pushDangerCheck()) {
+      dead = true; deadT = 0; sfx.gameover(); reportBest(score);
+      onHint(gt('hint_bubble_over', '…積み上がりすぎた。次のラウンドへ'));
+    }
+  }
+
+  function fire() {
+    if (ball || dead) return;
+    const speed = 640;
+    ball = { x: cannonX, y: cannonY, vx: aimDir.x * speed, vy: aimDir.y * speed, el: curEl };
+    curEl = nextEl; nextEl = randEl();
+    shots++;
+    if (shots % rowPushEvery === 0) pushNewRow();
+  }
+  function updateAim(x, y) {
+    let dx = x - cannonX, dy = y - cannonY;
+    if (dy >= -20) dy = -20; // 下向き・水平すぎる発射を防ぐ(必ず上に飛ぶよう最低角度を保証)
+    const len = Math.hypot(dx, dy) || 1;
+    aimDir = { x: dx / len, y: dy / len };
+  }
+  function pointerXY(e) {
+    const rect = canvas.getBoundingClientRect();
+    return [(e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left,
+            (e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top];
+  }
+  function pointerdown(e) {
+    if (dead) { reset(); return; }
+    const [x, y] = pointerXY(e);
+    aiming = true; updateAim(x, y);
+  }
+  function pointermove(e) {
+    if (!aiming) return;
+    const [x, y] = pointerXY(e);
+    updateAim(x, y);
+  }
+  function pointerup() {
+    if (!aiming) return;
+    aiming = false;
+    fire();
+  }
+  function pointercancel() { aiming = false; }
+  canvas.addEventListener('pointerdown', pointerdown);
+  canvas.addEventListener('pointermove', pointermove);
+  canvas.addEventListener('pointerup', pointerup);
+  canvas.addEventListener('pointercancel', pointercancel);
+
+  const stop = loopRAF((dt) => {
+    if (dead) {
+      deadT += dt;
+      if (deadT > 2.2) reset();
+    } else if (ball) {
+      ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+      if (ball.x - ballR < 0) { ball.x = ballR; ball.vx = -ball.vx; }
+      if (ball.x + ballR > canvas.width) { ball.x = canvas.width - ballR; ball.vx = -ball.vx; }
+      if (ball.y - ballR <= originY) {
+        placeBall(ball.x, ball.y, null);
+      } else {
+        let hit = null;
+        outer:
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < colsForRow(r); c++) {
+            if (grid[r][c] == null) continue;
+            const [cx, cy] = cellCenter(r, c);
+            if (Math.hypot(ball.x - cx, ball.y - cy) < ballR * 1.94) { hit = [r, c]; break outer; }
+          }
+        }
+        if (hit) placeBall(ball.x, ball.y, hit);
+      }
+    }
+
+    ctx.fillStyle = '#12122a'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(255,90,90,0.35)'; ctx.lineWidth = 2; ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(0, dangerY); ctx.lineTo(canvas.width, dangerY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < colsForRow(r); c++) {
+      const v = grid[r][c];
+      if (v == null) continue;
+      const [x, y] = cellCenter(r, c);
+      if (y < -cellSize || y > canvas.height + cellSize) continue;
+      const el = SPIRITSHOP_ELEMENTS[v];
+      ctx.beginPath(); ctx.arc(x, y, ballR, 0, Math.PI * 2);
+      ctx.fillStyle = el.color; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.font = `${Math.max(10, ballR)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(el.icon, x, y);
+    }
+
+    if (!dead) {
+      if (aiming) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2; ctx.setLineDash([4, 8]);
+        ctx.beginPath(); ctx.moveTo(cannonX, cannonY); ctx.lineTo(cannonX + aimDir.x * 220, cannonY + aimDir.y * 220); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      if (ball) {
+        const el = SPIRITSHOP_ELEMENTS[ball.el];
+        ctx.beginPath(); ctx.arc(ball.x, ball.y, ballR, 0, Math.PI * 2);
+        ctx.fillStyle = el.color; ctx.fill();
+        ctx.font = `${Math.max(10, ballR)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(el.icon, ball.x, ball.y);
+      } else {
+        const curElObj = SPIRITSHOP_ELEMENTS[curEl];
+        ctx.beginPath(); ctx.arc(cannonX, cannonY, ballR, 0, Math.PI * 2);
+        ctx.fillStyle = curElObj.color; ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.font = `${Math.max(10, ballR)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(curElObj.icon, cannonX, cannonY);
+      }
+      const nextElObj = SPIRITSHOP_ELEMENTS[nextEl];
+      const nr = ballR * 0.6, nx = cannonX + cellSize * 1.5, ny = cannonY;
+      ctx.beginPath(); ctx.arc(nx, ny, nr, 0, Math.PI * 2);
+      ctx.fillStyle = nextElObj.color; ctx.globalAlpha = 0.8; ctx.fill(); ctx.globalAlpha = 1;
+      ctx.font = `${Math.max(9, nr)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(nextElObj.icon, nx, ny);
+    }
+
+    drawBurst(ctx, burst, dt);
+    if (dead) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(`Score ${score}`, canvas.width / 2, canvas.height / 2);
+    }
+  });
+
+  return () => {
+    stop();
+    canvas.removeEventListener('pointerdown', pointerdown);
+    canvas.removeEventListener('pointermove', pointermove);
+    canvas.removeEventListener('pointerup', pointerup);
+    canvas.removeEventListener('pointercancel', pointercancel);
+    canvas.remove();
+  };
+}
+
+// ---------- 25. Element Defense (アクション, タワーディフェンス) ----------
+// task86(調査主導開発): 2026-09-05のWebSearch調査でYandex Games/Pokiにタワーディフェンスが
+// 定番ジャンルとして確認できた一方、既存24ゲーム(fort=1レーンタワー押し合いデュエル、
+// royale/cup=対人対戦)には「敵の侵攻ルートに沿ってタワーを配置し続ける」古典的TD要素が
+// 無かったため新規追加。核メカニクス(タップでタワー設置→自動迎撃→敵を拠点まで通さない、
+// タワーを再タップで強化)だけを抽出し、絵柄は既存10属性精霊(SPIRITSHOP_ELEMENTS)を再利用
+// した自作オリジナル。古典的なウェーブクリア制ではなく、他ゲームと同じ「時間経過で難化する
+// 1ラウンド完結スコアアタック」(HPが尽きたら自動リセット)に合わせてある。
+function mountDefense(container, { onScore, onHint }, config = {}) {
+  const enemySpeedStart = config.enemySpeedStart ?? 80;
+  const canvas = makeCanvas(container);
+  const ctx = canvas.getContext('2d');
+  onHint(gt('hint_defense', '道から少し離れたマスをタップしてタワーを設置！タワーをタップすると強化できるよ。敵を通り抜けさせないで！'));
+  const reportBest = makeBestTracker('defense', onHint);
+
+  // 経路のウェイポイント(正規化座標、画面外から画面外へ抜けるジグザグ)。layout()で実ピクセルに変換。
+  const PATH_NORM = [[-0.08, 0.22], [0.68, 0.22], [0.68, 0.5], [0.14, 0.5], [0.14, 0.78], [1.08, 0.78]];
+  let path, minTowerGap, towerR, totalLen;
+  function layout() {
+    path = PATH_NORM.map(([nx, ny]) => [nx * canvas.width, ny * canvas.height]);
+    minTowerGap = canvas.width * 0.075;
+    towerR = canvas.width * 0.052;
+    totalLen = 0;
+    for (let i = 0; i < path.length - 1; i++) totalLen += Math.hypot(path[i + 1][0] - path[i][0], path[i + 1][1] - path[i][1]);
+  }
+  layout();
+
+  function pointAtDist(d) {
+    d = Math.max(0, Math.min(totalLen, d));
+    for (let i = 0; i < path.length - 1; i++) {
+      const [x1, y1] = path[i], [x2, y2] = path[i + 1];
+      const segLen = Math.hypot(x2 - x1, y2 - y1);
+      if (d <= segLen) {
+        const f = segLen === 0 ? 0 : d / segLen;
+        return [x1 + (x2 - x1) * f, y1 + (y2 - y1) * f];
+      }
+      d -= segLen;
+    }
+    return path[path.length - 1];
+  }
+  function distToPath(x, y) {
+    let best = Infinity;
+    for (let i = 0; i < path.length - 1; i++) {
+      const [x1, y1] = path[i], [x2, y2] = path[i + 1];
+      const dx = x2 - x1, dy = y2 - y1;
+      const len2 = dx * dx + dy * dy;
+      let f = len2 === 0 ? 0 : ((x - x1) * dx + (y - y1) * dy) / len2;
+      f = Math.max(0, Math.min(1, f));
+      best = Math.min(best, Math.hypot(x - (x1 + dx * f), y - (y1 + dy * f)));
+    }
+    return best;
+  }
+
+  let towers, enemies, burst, t, score, dead, deadT, hp, gold, towerCost, spawnT, spawnEvery, killCount, combo;
+  function reset() {
+    towers = []; enemies = []; burst = [];
+    t = 0; score = 0; dead = false; deadT = 0;
+    hp = 10; gold = 40; towerCost = 20;
+    spawnT = 0; spawnEvery = 1.6; killCount = 0;
+    combo = makeCombo(2200);
+  }
+  reset();
+
+  function spawnEnemy() {
+    const hpMax = Math.round(18 + t * 1.1);
+    const speed = Math.min(180, enemySpeedStart + t * 1.4);
+    enemies.push({ dist: 0, hp: hpMax, hpMax, speed });
+  }
+
+  function pointerdown(e) {
+    if (dead) { reset(); return; }
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX ?? (e.touches && e.touches[0].clientX)) - rect.left;
+    const y = (e.clientY ?? (e.touches && e.touches[0].clientY)) - rect.top;
+    if (y < 46 || y > canvas.height - 90) return; // 上部HUD/下部ナビと被らないよう除外
+
+    for (const tw of towers) {
+      if (Math.hypot(x - tw.x, y - tw.y) < towerR) {
+        const cost = Math.round(tw.level * 18);
+        if (gold >= cost) { gold -= cost; tw.level++; tw.range += 8; tw.dmg += 4; sfx.note(520 + tw.level * 30); }
+        else sfx.bad();
+        return;
+      }
+    }
+    if (distToPath(x, y) < minTowerGap) { sfx.bad(); return; }
+    for (const tw of towers) if (Math.hypot(x - tw.x, y - tw.y) < towerR * 2) { sfx.bad(); return; }
+    if (gold < towerCost) { sfx.bad(); return; }
+    gold -= towerCost;
+    const el = SPIRITSHOP_ELEMENTS[towers.length % SPIRITSHOP_ELEMENTS.length];
+    towers.push({ x, y, level: 1, range: canvas.width * 0.16, dmg: 9, cd: 0, el, tracer: null });
+    towerCost = Math.round(towerCost * 1.14);
+    sfx.note(440);
+  }
+  canvas.addEventListener('pointerdown', pointerdown);
+
+  const stop = loopRAF((dt) => {
+    if (dead) {
+      deadT += dt;
+      if (deadT > 1.6) reset();
+    } else {
+      t += dt;
+      score = killCount * 10 + Math.floor(t * 2);
+      onScore(score);
+
+      spawnT += dt;
+      spawnEvery = Math.max(0.55, 1.6 - t * 0.012);
+      if (spawnT > spawnEvery) { spawnT = 0; spawnEnemy(); }
+
+      for (const en of enemies) en.dist += en.speed * dt;
+
+      for (const tw of towers) {
+        tw.cd -= dt;
+        if (tw.cd <= 0) {
+          let target = null, bestDist = -Infinity;
+          for (const en of enemies) {
+            if (en.hp <= 0) continue;
+            const [ex, ey] = pointAtDist(en.dist);
+            if (Math.hypot(ex - tw.x, ey - tw.y) <= tw.range && en.dist > bestDist) { bestDist = en.dist; target = en; }
+          }
+          if (target) {
+            target.hp -= tw.dmg;
+            tw.cd = 0.55;
+            const [ex, ey] = pointAtDist(target.dist);
+            tw.tracer = { x: ex, y: ey, life: 0.12 };
+            if (target.hp <= 0) { killCount++; gold += 5; combo.hit(onHint); spawnBurst(burst, ex, ey, tw.el.color, 10); }
+          }
+        }
+        if (tw.tracer) { tw.tracer.life -= dt; if (tw.tracer.life <= 0) tw.tracer = null; }
+      }
+      enemies = enemies.filter(en => en.hp > 0);
+
+      for (const en of enemies) {
+        if (en.dist >= totalLen) {
+          en.hp = -999; hp -= 1; combo.miss();
+          if (hp <= 0 && !dead) {
+            dead = true; deadT = 0; sfx.gameover(); flashEl(canvas); reportBest(score);
+            onHint(gt('hint_defense_over', '…拠点が突破された。次のラウンドへ'));
+          }
+        }
+      }
+      enemies = enemies.filter(en => en.hp > -900);
+    }
+
+    ctx.fillStyle = '#1a2e22'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)'; ctx.lineWidth = Math.max(18, canvas.width * 0.05);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(path[0][0], path[0][1]);
+    for (let i = 1; i < path.length; i++) ctx.lineTo(path[i][0], path[i][1]);
+    ctx.stroke();
+
+    for (const tw of towers) {
+      ctx.beginPath(); ctx.arc(tw.x, tw.y, towerR, 0, Math.PI * 2);
+      ctx.fillStyle = tw.el.color; ctx.fill();
+      ctx.font = `${Math.round(towerR)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(tw.el.icon, tw.x, tw.y);
+      ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#fff';
+      ctx.fillText(String(tw.level), tw.x, tw.y + towerR + 12);
+      if (tw.tracer) {
+        ctx.strokeStyle = tw.el.color; ctx.globalAlpha = Math.max(0, tw.tracer.life / 0.12); ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(tw.x, tw.y); ctx.lineTo(tw.tracer.x, tw.tracer.y); ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    for (const en of enemies) {
+      const [ex, ey] = pointAtDist(en.dist);
+      ctx.beginPath(); ctx.arc(ex, ey, 14, 0, Math.PI * 2);
+      ctx.fillStyle = '#c62828'; ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fillRect(ex - 14, ey - 24, 28, 4);
+      ctx.fillStyle = '#7CFC90'; ctx.fillRect(ex - 14, ey - 24, 28 * Math.max(0, en.hp / en.hpMax), 4);
+    }
+
+    drawBurst(ctx, burst, dt);
+
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(`❤ ${Math.max(0, hp)}  🪙 ${gold}`, 16, 34);
+    ctx.textAlign = 'right';
+    ctx.fillText(`+${towerCost}`, canvas.width - 16, 34);
+    ctx.textAlign = 'left';
+
+    if (dead) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(gt('restart_hint', 'タップでリスタート'), canvas.width / 2, canvas.height / 2);
+      ctx.textAlign = 'left';
+    }
+  });
+
+  return () => {
+    stop();
+    canvas.removeEventListener('pointerdown', pointerdown);
+    canvas.remove();
+  };
+}
+
 const GAME_DEFS = [
   { id: 'dodge', title: 'ブロック避け', genre: 'アクション', mount: mountDodge,
     params: [{ key: 'blockSpeed', label: 'ブロックの速さ', min: 120, max: 400, step: 20, default: 180 }] },
@@ -3784,6 +4292,16 @@ const GAME_DEFS = [
   // ボックス格闘は駆け引き調整の難易度が高いため、aim/stackと同じタイミング判定を土台にした
   // パリィ式1vs1デュエルとして実装(コード・演出は新規)。mountSpar定義は本ファイル上部。
   { id: 'spar', title: 'エレメント・スパー', genre: 'アクション', mount: mountSpar },
+  // task86: Bubble Shooter(Poki/Yandex双方の定番、Bubble Shooter系タイトルが長年上位常連)
+  // 着想。狙って撃つ→同色3つ以上つながると消える核メカニクスだけを抽出した自作オリジナル。
+  // mountBubble定義は本ファイル上部。
+  { id: 'bubble', title: 'エレメント・バブル', genre: 'パズル', mount: mountBubble,
+    params: [{ key: 'rowPushEvery', label: '新しい列が増えるまでの発射回数', min: 3, max: 10, step: 1, default: 5 }] },
+  // task86: タワーディフェンス(Yandex Games/Pokiの定番ジャンル)着想。敵の侵攻ルートに
+  // タップでタワーを設置→自動迎撃という核メカニクスだけを抽出した自作オリジナル。
+  // mountDefense定義は本ファイル上部。
+  { id: 'defense', title: 'エレメント・ディフェンス', genre: 'アクション', mount: mountDefense,
+    params: [{ key: 'enemySpeedStart', label: '敵の速さ', min: 50, max: 150, step: 10, default: 80 }] },
 ];
 
 window.GAME_DEFS = GAME_DEFS;
