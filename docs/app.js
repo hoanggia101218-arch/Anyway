@@ -802,11 +802,13 @@ async function initFeed(user) {
     mount.innerHTML = '';
     const scoreBadge = card.querySelector('.score-badge');
     const hintEl = card.querySelector('.hint-text');
-    const scoreLabel = window.I18N ? window.I18N.t('score_label') : 'スコア';
-    scoreBadge.textContent = `${scoreLabel}: 0`;
+    scoreBadge.textContent = `${window.I18N ? window.I18N.t('score_label') : 'スコア'}: 0`;
     hintEl.textContent = '';
     activeCleanup = def.mount(mount, {
-      onScore: (s) => { scoreBadge.textContent = `${scoreLabel}: ${s}`; },
+      // reads the label fresh (not a captured const) so a mid-game language switch
+      // (see the onLangChange listener near createCard) doesn't get reverted back
+      // to the old language by the next onScore tick.
+      onScore: (s) => { scoreBadge.textContent = `${window.I18N ? window.I18N.t('score_label') : 'スコア'}: ${s}`; },
       onHint: (h) => { hintEl.textContent = h; setTimeout(() => { hintEl.textContent = ''; }, 3000); },
     }, meta.config);
   }
@@ -1027,6 +1029,36 @@ async function initFeed(user) {
 
     io.observe(card);
     return card;
+  }
+
+  // task87 QA fix (2026-09-05): createCard() bakes genre/title/creator text into the
+  // DOM once at creation time, so switching language via the header selector while
+  // already scrolling the feed left every already-mounted card's tag/title/creator
+  // (and the score-badge label on inactive cards) in the old language until reload.
+  // applyGameDefsI18n() (registered above in initAccount) only updates the GAME_DEFS
+  // data, not cards already in the DOM, so re-stamp those three text nodes here too.
+  if (window.I18N) {
+    window.I18N.onLangChange(() => {
+      document.querySelectorAll('.card').forEach((card) => {
+        const meta = cardMeta.get(card);
+        if (!meta) return;
+        const tag = card.querySelector('.tag');
+        if (tag) tag.textContent = `#${meta.def.genre}`;
+        const title = card.querySelector('.title');
+        if (title) title.textContent = meta.customTitle || meta.def.title;
+        const creator = card.querySelector('.creator');
+        if (creator) {
+          creator.textContent = meta.creatorName
+            ? `@${meta.creatorName} ・ ${window.I18N.t('card_remix_label')}`
+            : window.I18N.t('official_creator');
+        }
+        const scoreBadge = card.querySelector('.score-badge');
+        if (scoreBadge) {
+          const currentScore = card === activeCard ? (scoreBadge.textContent.split(':')[1] || ' 0').trim() : '0';
+          scoreBadge.textContent = `${window.I18N.t('score_label')}: ${currentScore}`;
+        }
+      });
+    });
   }
 
   function appendCards(n) {
