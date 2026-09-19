@@ -789,17 +789,32 @@ async function initFeed(user) {
     if (entries[0].isIntersecting) appendCards(3);
   }, { threshold: 0.1 });
 
-  function activateCard(card) {
-    if (activeCard === card) return;
+  // makeCanvas() (games.js) sizes the canvas once at mount, so a width change (rotation /
+  // desktop window resize) leaves it stale. Re-mount the active game when the width changes;
+  // height-only changes (mobile address bar / keyboard) are ignored so play isn't reset by them.
+  let mountedWidth = 0;
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (!activeCard) return;
+      const m = activeCard.querySelector('.game-mount');
+      if (m && Math.abs(m.clientWidth - mountedWidth) > 40) activateCard(activeCard, true);
+    }, 300);
+  });
+
+  function activateCard(card, forceRemount) {
+    if (activeCard === card && !forceRemount) return;
     if (activeCleanup) { activeCleanup(); activeCleanup = null; }
     const isFirstCard = activeCard === null;
     activeCard = card;
     const meta = cardMeta.get(card);
     const def = meta.def;
     lastGameId = def.id;
-    if (!isFirstCard) maybeShowInterstitial(); // don't ad-interrupt the very first card on app open
+    if (!isFirstCard && !forceRemount) maybeShowInterstitial(); // don't ad-interrupt the very first card on app open
     const mount = card.querySelector('.game-mount');
     mount.innerHTML = '';
+    mountedWidth = mount.clientWidth;
     const scoreBadge = card.querySelector('.score-badge');
     const hintEl = card.querySelector('.hint-text');
     scoreBadge.textContent = `${window.I18N ? window.I18N.t('score_label') : 'スコア'}: 0`;
