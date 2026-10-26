@@ -216,6 +216,7 @@ function makeBestTracker(id, onHint) {
     if (score > best) {
       best = score;
       localStorage.setItem('anyway_best_' + id, String(best));
+      if (window.AnywayScores) window.AnywayScores.submit(id, score); // server ranking (scores.js), no-op for guests/offline
       if (!announced) { announced = true; if (onHint) onHint(gt('hint_best_update', '🏆 自己ベスト更新！ {n}').replace('{n}', score)); }
     }
   };

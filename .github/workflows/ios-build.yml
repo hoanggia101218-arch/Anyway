@@ -1,0 +1,75 @@
+name: iOS build (unsigned, simulator)
+
+# Free: this repository is public, so GitHub-hosted macOS minutes are not billed.
+# Produces an unsigned simulator build to prove the wrapper compiles. Signed App Store builds need an
+# Apple Developer account (operator-owned).
+on:
+  workflow_dispatch:
+    inputs:
+      package_manager:
+        description: "iOS dependency manager for the generated project"
+        default: "SPM"
+        type: choice
+        options: [SPM, CocoaPods]
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'capacitor.config.json'
+      - 'package.json'
+      - 'scripts/**'
+      - 'resources/**'
+      - 'ios-config/**'
+      - '.github/workflows/ios-build.yml'
+
+concurrency:
+  group: ios-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Select newest Xcode
+        run: |
+          ls /Applications | grep -i '^Xcode' || true
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+      - name: Install npm dependencies
+        run: npm install --no-audit --no-fund
+      - name: Prepare web assets (docs -> www)
+        run: ./scripts/prepare-web.sh
+      - name: Generate iOS project
+        run: |
+          PM="${{ github.event.inputs.package_manager || 'SPM' }}"
+          npx cap add ios --packagemanager "$PM"
+          python3 scripts/ios-customize.py
+          npx cap sync ios
+      - name: Build for iOS Simulator (no signing)
+        run: |
+          set -o pipefail
+          cd ios/App
+          if [ -d App.xcworkspace ] && [ -f Podfile ]; then TARGET="-workspace App.xcworkspace"; else TARGET="-project App.xcodeproj"; fi
+          xcodebuild $TARGET -scheme App -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build | tee xcodebuild.log | tail -60
+      - name: Package .app
+        run: |
+          cd ios/App/build/Build/Products/Debug-iphonesimulator
+          ls
+          zip -qr "$GITHUB_WORKSPACE/Anyway-simulator.zip" App.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Anyway-simulator-app
+          path: Anyway-simulator.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: xcodebuild-log
+          path: ios/App/xcodebuild.log
+          if-no-files-found: ignore

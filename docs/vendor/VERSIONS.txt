@@ -1,0 +1,1 @@
+supabase-js 2.118.0 (UMD), three r147 -- vendored 2026-10-26 from jsDelivr so the iOS app and the website need no CDN at runtime

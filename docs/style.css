@@ -131,8 +131,9 @@ html, body {
   backdrop-filter: blur(16px) saturate(180%); -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255,255,255,0.18);
   padding: 5px 12px; border-radius: 12px; font-size: 13px;
-  pointer-events: none;
+  pointer-events: auto; cursor: pointer; /* tap = ranking (scores.js) */
 }
+.score-badge::after { content: ' 🏆'; font-size: 11px; opacity: 0.8; }
 
 .overlay-bottom {
   position: absolute; bottom: calc(92px + var(--safe-bottom)); left: 16px; right: 90px; z-index: 5; pointer-events: none;
@@ -584,6 +585,22 @@ html, body {
   overflow-y: auto; box-sizing: border-box; padding: 20px;
   display: flex; flex-direction: column;
 }
+/* 2026-10-26 QA: on short phones (iPhone SE/mini, 375x667) the longer map cards overflow their
+   own height, so the 選択 / 描き始める button sat below the fold inside a nested scroller (and
+   behind the bottom nav's NEW badge until the card was scrolled by hand). Pin it to the bottom of
+   the card's visible area so it is always tappable no matter how long the description is. */
+/* Same QA pass: the card is a fixed-height flex column, so on those short phones every child was
+   allowed to shrink -- the 4:3 photo carousel collapsed to 0-46px tall (map 2-6 previews, and the
+   angle-switch taps, were simply invisible). Children must keep their natural size; the card
+   itself scrolls. */
+.map-card > * { flex-shrink: 0; }
+.map-card > .post-btn {
+  position: sticky; bottom: 0; margin-top: auto; flex-shrink: 0;
+  /* opaque base layer so the text scrolling underneath doesn't show through the button's own
+     translucent gradient; the ring/shadow hides it just above and below the button too */
+  background: linear-gradient(180deg, rgba(255,80,115,0.9), rgba(254,44,85,0.75)), #14141a;
+  box-shadow: 0 0 0 8px #0c0c10, inset 0 1px 0 rgba(255,255,255,0.35);
+}
 .map-card-pos { font-size: 12px; opacity: 0.55; font-variant-numeric: tabular-nums; margin-bottom: 4px; }
 .map-card-name { font-size: 22px; font-weight: 800; margin: 0 0 4px; }
 .map-card-tagline { font-size: 13px; opacity: 0.75; margin: 0 0 14px; }
@@ -696,3 +713,30 @@ html, body {
 #account-modal-lang-slot .i18n-lang-select { width: auto; margin: 0; padding: 6px 8px; font-size: 12px; }
 .profile-lang-row { padding: 14px 16px; }
 .profile-lang-row label { display: block; font-size: 12px; opacity: 0.7; margin-bottom: 6px; }
+
+/* ---------- Ranking modal (scores.js) ---------- */
+#lb-overlay {
+  position: fixed; inset: 0; z-index: 120; background: rgba(8,8,10,0.8);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.lb-box {
+  position: relative; width: min(100%, 420px); max-height: 80vh; overflow-y: auto; color: #fff;
+  padding: 20px 16px 16px; border-radius: 22px;
+  background: linear-gradient(180deg, rgba(60,60,68,0.75), rgba(20,20,24,0.9));
+  border: 1px solid rgba(255,255,255,0.2);
+}
+.lb-close { position: absolute; top: 8px; right: 12px; background: none; border: none; color: #fff; font-size: 26px; cursor: pointer; }
+.lb-title { font-size: 17px; margin: 0 28px 12px 0; }
+.lb-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.lb-tab { flex: 1; padding: 8px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.06); color: #fff; font-size: 13px; cursor: pointer; }
+.lb-tab.active { background: rgba(254,44,85,0.35); border-color: #fe2c55; }
+.lb-note { font-size: 13px; opacity: 0.7; text-align: center; padding: 18px 0; margin: 0; }
+.lb-list { list-style: none; margin: 0; padding: 0; }
+.lb-list li { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; font-size: 14px; }
+.lb-list li:nth-child(odd) { background: rgba(255,255,255,0.05); }
+.lb-list li.lb-me { background: rgba(254,44,85,0.22); font-weight: 700; }
+.lb-rank { width: 28px; text-align: center; opacity: 0.8; font-variant-numeric: tabular-nums; }
+.lb-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-name em { font-style: normal; font-size: 11px; opacity: 0.8; margin-left: 4px; }
+.lb-score { font-variant-numeric: tabular-nums; font-weight: 700; }

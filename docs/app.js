@@ -565,6 +565,7 @@ function pickNextGame(weights, lastId, likedSet) {
 
 // ---------- Feed ----------
 async function initFeed(user) {
+  if (window.AnywayScores) window.AnywayScores.init(sb, user);
   // task55: best-effort sync of the chosen language to Supabase for logged-in users, so it
   // follows them to other devices. Guests only ever get localStorage (i18n.js's default).
   // Wrapped so that if `profiles.preferred_language` doesn't exist yet as a column (schema
@@ -1041,6 +1042,8 @@ async function initFeed(user) {
     });
 
     card.querySelector('.search-btn').addEventListener('click', () => openTab('search'));
+    // tap the score badge -> ranking for this game (scores.js)
+    card.querySelector('.score-badge').addEventListener('click', () => { if (window.AnywayScores) window.AnywayScores.open(def.id, customTitle || def.title); });
 
     io.observe(card);
     return card;
@@ -1173,7 +1176,23 @@ async function initFeed(user) {
       const { data, error } = await sb.from('posts')
         .insert({ game_id: def.id, config, custom_title: customTitle || null, creator_id: user.id })
         .select().single();
-      if (error) { console.error('failed to save post', error); return; }
+      if (error) {
+        // 2026-10-26 QA: this used to be a silent console.error -- the freshly-built card stayed
+        // in the feed as if the post had succeeded, then vanished after a reload (nothing was
+        // ever saved). Tell the user, and take the phantom card back out so the feed matches
+        // what the server actually has.
+        console.error('failed to save post', error);
+        if (activeCard === card) {
+          if (activeCleanup) { activeCleanup(); activeCleanup = null; }
+          activeCard = null;
+        }
+        io.unobserve(card);
+        cardMeta.delete(card);
+        card.remove();
+        alert(window.I18N ? window.I18N.t('post_save_failed') : '投稿の保存に失敗しました。通信状況を確認してもう一度お試しください。');
+        openTab('create');
+        return;
+      }
       myPosts.unshift(data);
       card.dataset.postId = data.id;
       cardMeta.get(card).postId = data.id;
@@ -2014,6 +2033,7 @@ async function initFeed(user) {
       <div class="profile-lang-row" id="profile-lang-slot"><label data-i18n="language_label">言語 / Language</label></div>
       <a class="logout-link" id="profile-legal-link" style="color:#4ea8ff;" data-i18n="legal_link">利用規約・プライバシーポリシー</a>
       <a class="logout-link" id="profile-logout" data-i18n="profile_logout">ログアウト</a>
+      <a class="logout-link" id="profile-delete-account" style="color:#ff6b6b;" data-i18n="acct_delete_btn">アカウントを削除する</a>
     `;
     if (window.I18N) {
       window.I18N.applyI18n(body);
@@ -2021,6 +2041,18 @@ async function initFeed(user) {
     }
     document.getElementById('profile-legal-link').addEventListener('click', showLegalModal);
     document.getElementById('profile-logout').addEventListener('click', logout);
+    document.getElementById('profile-delete-account').addEventListener('click', async () => {
+      // App Store Review Guideline 5.1.1(v): in-app account deletion. Two confirmations, then the
+      // delete_my_account() RPC (03_Anyway/ios_release migration) removes the user's rows + auth user.
+      if (!confirm(t55p('acct_delete_confirm1'))) return;
+      if (!confirm(t55p('acct_delete_confirm2'))) return;
+      const { error } = await sb.rpc('delete_my_account');
+      if (error) { console.error('delete_my_account failed', error); alert(t55p('acct_delete_failed')); return; }
+      try { Object.keys(localStorage).filter((k) => k.startsWith('anyway_')).forEach((k) => localStorage.removeItem(k)); } catch (e) { /* ignore */ }
+      await sb.auth.signOut();
+      alert(t55p('acct_delete_done'));
+      location.reload();
+    });
     const watchAdBtn = document.getElementById('watch-ad-btn');
     if (watchAdBtn) {
       watchAdBtn.addEventListener('click', async () => {
