@@ -1,0 +1,23 @@
+name: Supabase keep-alive
+
+# Supabase's free plan pauses a project after about a week without activity. One tiny read per day
+# keeps the Anyway project awake at no cost. If the project is already paused this run fails (red),
+# which is the signal to press "Restore project" in the Supabase dashboard.
+# The key below is the project's PUBLISHABLE (anon) key - the same value that is already public in app.js.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read one row
+        run: |
+          code=$(curl -s -o /tmp/out.json -w '%{http_code}' \
+            -H "apikey: sb_publishable_wGQyRnhd3bxGmcppLkOx8w_-xJI3qn1" \
+            "https://qmqmpfjgxgwmsdeqpbiu.supabase.co/rest/v1/profiles?select=id&limit=1")
+          echo "HTTP $code"; head -c 300 /tmp/out.json; echo
+          test "$code" = "200"
