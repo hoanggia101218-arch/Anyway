@@ -43,7 +43,7 @@ jobs:
       - name: Install npm dependencies
         run: npm install --no-audit --no-fund
       - name: Prepare web assets (docs -> www)
-        run: ./scripts/prepare-web.sh
+        run: bash scripts/prepare-web.sh
       - name: Generate iOS project
         run: |
           PM="${{ github.event.inputs.package_manager || 'SPM' }}"
